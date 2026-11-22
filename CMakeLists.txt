@@ -59,6 +59,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     common/rtos_hooks.c
     bsp/bsp_i2c.cpp
     bsp/bsp_pwm.cpp
+    bsp/bsp_bluetooth.cpp
     # bsp/bsp_can.cpp   ← 任务02 阶段一不需要 CAN，先不编译（源码保留，后续要 CAN 时取消注释）
     modules/mpu6050/mpu6050.cpp
     modules/attitude/attitude.cpp

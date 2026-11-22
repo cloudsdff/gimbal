@@ -23,8 +23,13 @@ extern UART_HandleTypeDef huart1;
 namespace common {
 namespace {
 
-constexpr std::size_t kSlotSize = 96;    // 单条日志最大长度（含前缀）
-constexpr std::size_t kQueueDepth = 12;   // 8 × 96 = 768 B RAM
+// 单条日志最大长度（含前缀）。
+// 96 不够用：加了 bt= 之后统计行到 95 字节，正好顶到边界，
+// 一旦再长一点就会被截断 —— 连行尾的 \r\n 一起丢掉，
+// 后面的角度帧就接到同一行上，看起来像"串口交织"（实际是截断）。
+// 128 留足余量，代价是 12×32 = 384 B RAM。
+constexpr std::size_t kSlotSize = 128;
+constexpr std::size_t kQueueDepth = 12;   // 12 × 128 = 1536 B RAM
 
 osMessageQueueId_t g_queue = nullptr;
 volatile std::uint32_t g_dropped = 0;
@@ -39,18 +44,17 @@ const char* tag_of(LogLevel lv)
 /// 直接写串口（只允许 Log 任务或内核启动前调用）
 ///
 /// 关键：USART1 上还有"角度帧"在走 DMA（app 层以 50 Hz 发送）。
-/// 两个写者必须串行，否则日志行会被 A,... 插进中间（实测过）。
-/// 这里先抢 TX 锁、等 DMA 空闲，再逐字节阻塞写。
+/// 两个写者必须串行，否则日志行会被 A,... 插进中间（实测过两次）。
+///
+/// 所以这里不自己调 HAL，而是走 bsp::uart1.write()：
+/// 那条路径内部会抢 TX 锁、等 DMA 空闲、并置"总线占用"标志，
+/// 串行化逻辑只存在一处，不会两边各写一套而漏掉。
 void emit(const char* s)
 {
-  bsp::uart1_tx_lock();
-  (void)bsp::uart1_wait_idle(50);
-  while (*s != '\0') {
-    std::uint8_t ch = static_cast<std::uint8_t>(*s);
-    (void)HAL_UART_Transmit(&huart1, &ch, 1, 10);
-    ++s;
-  }
-  bsp::uart1_tx_unlock();
+  if (s == nullptr) return;
+  const std::size_t n = std::strlen(s);
+  if (n == 0) return;
+  (void)bsp::uart1.write(reinterpret_cast<const std::uint8_t*>(s), n, 100);
 }
 
 /// Log 任务：从队列取字符串，慢慢发给串口
