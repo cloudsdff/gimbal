@@ -18,6 +18,7 @@
 #include <cstring>
 
 #include "attitude.hpp"
+#include "bluetooth.hpp"
 #include "bsp_i2c.hpp"
 #include "pwm.hpp"
 #include "bsp_uart.hpp"
@@ -45,9 +46,20 @@ module::Servo g_servo_yaw(bsp::servo_pwm, 1);
 module::Servo g_servo_pitch(bsp::servo_pwm, 2);
 module::Gimbal g_gimbal(g_servo_yaw, g_servo_pitch);
 
-/// 指令缓冲区
-char g_cmd[64];
-std::size_t g_cmd_len = 0;
+/// 蓝牙初始化结果（app_init 在调度器之前执行，日志只能延后到任务里打印）
+common::Err g_bt_init = common::Err::NotInit;
+
+/// 指令缓冲区（调试串口和蓝牙各一份，互不干扰）
+struct CmdBuf {
+  char buf[64];
+  std::size_t len = 0;
+};
+
+CmdBuf g_cmd_uart1;
+CmdBuf g_cmd_bt;
+
+/// 往某个指令缓冲里喂一个字节，遇到换行就执行
+void feed(CmdBuf& c, std::uint8_t ch);
 
 inline int cd(float deg) { return static_cast<int>(deg * 100.0f); }
 
@@ -69,15 +81,40 @@ void handle_command(const char* line)
     } else {
       LOG_W("cmd alpha out of range: %d", milli);
     }
+  } else if (line[0] == 'B' && line[1] == ',') {
+    // B,<baud>:??????(HC-05 ?? 9600 ??,??? AT ??)
+    const int baud = std::atoi(line + 2);
+    LOG_I("cmd bt baud -> %d : %s", baud, common::to_str(bsp::uart2_set_baud((std::uint32_t)baud)));
   } else if (line[0] == 'C') {
     g_att.begin_calibration(kCalSamples);
     LOG_I("cmd recalibrate");
   }
 }
 
+/// 往某个指令缓冲里喂一个字节，遇到换行就执行
+void feed(CmdBuf& c, std::uint8_t ch)
+{
+  if (ch == '\n' || ch == '\r') {
+    if (c.len > 0) {
+      c.buf[c.len] = '\0';
+      handle_command(c.buf);
+      c.len = 0;
+    }
+  } else if (c.len < sizeof(c.buf) - 1) {
+    c.buf[c.len++] = static_cast<char>(ch);
+  } else {
+    c.len = 0;   // 溢出丢弃，避免执行半截指令
+  }
+}
+
 void attitude_task(void* arg)
 {
   (void)arg;
+
+  // 调度器已启动，这里才开始打印（app_init 在调度器之前，
+  // osMessageQueuePut 会失败，日志会丢 —— 实测过）
+  LOG_I("task02: attitude + gimbal control");
+  LOG_I("bluetooth init -> %s", common::to_str(g_bt_init));
 
   // ---- 1) 传感器 ----
   common::Err e = g_mpu.init();
@@ -169,30 +206,24 @@ void attitude_task(void* arg)
       (void)bsp::i2c1.recover_bus();
     }
 
-    // 3.6 串口指令（每周期读 1 字节，非阻塞）
+    // 3.6 串口指令（调试口 + 蓝牙，每周期各读 1 字节，非阻塞）
     std::uint8_t ch = 0;
     if (bsp::uart1.read(&ch, 1, 0) == common::Err::Ok) {
-      if (ch == '\n' || ch == '\r') {
-        if (g_cmd_len > 0) {
-          g_cmd[g_cmd_len] = '\0';
-          handle_command(g_cmd);
-          g_cmd_len = 0;
-        }
-      } else if (g_cmd_len < sizeof(g_cmd) - 1) {
-        g_cmd[g_cmd_len++] = static_cast<char>(ch);
-      } else {
-        g_cmd_len = 0;   // 溢出丢弃
-      }
+      feed(g_cmd_uart1, ch);
+    }
+    if (bsp::uart2.read(&ch, 1, 0) == common::Err::Ok) {
+      feed(g_cmd_bt, ch);
     }
 
     // 3.7 每秒统计
     if ((now - last_stats) >= 1000u) {
       last_stats = now;
       const module::Euler eu = g_att.euler();
-      LOG_I("att %luHz samp=%lu sent=%lu drop=%lu rx=%lu | yaw=%d pitch=%d roll=%d servo=%lu/%lu",
+      LOG_I("att %luHz samp=%lu sent=%lu drop=%lu rx=%lu bt=%lu | yaw=%d pitch=%d roll=%d servo=%lu/%lu",
             (unsigned long)(frames * 1000u / (now - t_start ? (now - t_start) : 1u)),
             (unsigned long)frames, (unsigned long)sent, (unsigned long)dropped,
-            (unsigned long)bsp::uart1_rx_count(), cd(eu.yaw), cd(eu.pitch), cd(eu.roll),
+            (unsigned long)bsp::uart1_rx_count(), (unsigned long)bsp::uart2_rx_count(),
+            cd(eu.yaw), cd(eu.pitch), cd(eu.roll),
             (unsigned long)g_servo_yaw.pulse_us(),
             (unsigned long)g_servo_pitch.pulse_us());
     }
@@ -207,7 +238,10 @@ extern "C" void app_init(void)
 {
   common::log_init();
   bsp::uart1_start_rx();   // 关键：启动串口中断接收，否则指令永远收不到
-  LOG_I("task02: attitude + gimbal control");
+
+  // 蓝牙指令通道（HC-05 → USART2 / PA2-PA3）
+  // 注意：这里不能打印 —— 调度器还没启动，日志入队会失败（实测丢过日志）
+  g_bt_init = bsp::uart2_start();
 
   const osThreadAttr_t attr = {
       .name = "Gimbal", .stack_size = 2048, .priority = osPriorityAboveNormal};
