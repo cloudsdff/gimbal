@@ -1,21 +1,24 @@
 /**
  * @file    app_main.cpp
- * @brief   应用层入口 + 任务划分（任务01 工程要求 2）
+ * @brief   任务02 阶段一：姿态解算（互补滤波 + 上电自校准 + 零漂抑制）
  *
- * 任务划分一览（详见 docs/05-任务设计.md）：
- *   task_led       200 ms   LED 心跳          （CubeMX 生成，保留）
- *   task_log       500 ms   栈水线观察        （CubeMX 生成，保留）
- *   Comm           1 ms     CAN 收发          （本文件，优先级较高）
- *   Sensor         5 ms     MPU6050 采样      （本文件，优先级中）
- *   log_task       事件驱动 日志发送          （common/log.cpp，优先级最低）
+ * 当前实现范围：
+ *   [x] MPU6050 上电自校准（静止 1 秒求陀螺零偏）
+ *   [x] 零偏扣除 + 小角速度死区（零漂抑制）
+ *   [x] 200 Hz 采样、50 Hz 串口输出三轴角度
+ *   [ ] 上位机实时波形（下一步）
+ *   [ ] 蓝牙指令控制指向（硬件到货后）
+ *   [ ] 云台闭环（云台到货后）
  *
  * 这个文件里不允许出现 HAL_ 前缀。
  */
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
-#include "bsp_can.hpp"
+#include "attitude.hpp"
 #include "bsp_i2c.hpp"
-#include "can.hpp"
+#include "bsp_uart.hpp"
 #include "cmsis_os2.h"
 #include "i2c.hpp"
 #include "log.hpp"
@@ -23,135 +26,94 @@
 
 namespace {
 
-#ifdef CAN_NODE_B
-constexpr std::uint32_t kMyId = 0x456;
-constexpr std::uint32_t kPeerId = 0x123;
-#else
-constexpr std::uint32_t kMyId = 0x123;
-constexpr std::uint32_t kPeerId = 0x456;
-#endif
-
-#ifdef STACK_TEST_SMALL
-constexpr std::uint32_t kCommStack = 200;   // 失败路径测试：故意给不够的栈
-#else
-constexpr std::uint32_t kCommStack = 1024;
-#endif
+// ---- 采样与输出参数 ----
+constexpr std::uint32_t kSampleHz = 200;
+constexpr std::uint32_t kSamplePeriodMs = 1000 / kSampleHz;   // 5 ms
+constexpr float kDt = 1.0f / static_cast<float>(kSampleHz);    // 固定步长
+constexpr int kOutputDiv = 4;                                  // 每 4 帧 → 50 Hz
+constexpr std::uint16_t kCalSamples = 200;                     // 校准 1 秒
 
 module::Mpu6050 g_mpu(bsp::i2c1);
-osThreadId_t g_comm_id = nullptr;
-osThreadId_t g_sensor_id = nullptr;
+module::Attitude g_att(0.98f);
 
-// ---------------------------------------------------------------- Comm 任务
-// 1 ms 周期里做四件事：收帧、bus-off 恢复、按 100 ms 发帧、5 s 打一次统计
-void comm_task(void* arg)
+/// 角度 → 0.01° 整数（F103 上 %f 很慢，用整数更稳）
+inline int cd(float deg) { return static_cast<int>(deg * 100.0f); }
+
+void attitude_task(void* arg)
 {
   (void)arg;
-  std::uint32_t seq = 0;
-  std::uint32_t last_tx = 0;
-  std::uint32_t last_stats = 0;
-  std::uint32_t last_log = 0;
+
+  // 1) 传感器初始化
+  const common::Err e = g_mpu.init();
+  LOG_I("mpu init -> %s", common::to_str(e));
+  if (e != common::Err::Ok) {
+    LOG_E("mpu6050 unavailable, attitude task halted");
+    for (;;) osDelay(1000);
+  }
+
+  // 2) 上电自校准
+  g_att.begin_calibration(kCalSamples);
+  LOG_I("calibrating %u samples (keep still)...", (unsigned)kCalSamples);
+
+  const std::uint32_t t_start = osKernelGetTickCount();
+  std::uint32_t last_stats = t_start;
+  std::uint32_t frames = 0;          // 已处理的采样帧
+  std::uint32_t sent = 0;            // 已发出的角度帧
+  std::uint32_t dropped = 0;         // DMA 忙导致的丢弃
+  bool cal_logged = false;
 
   for (;;) {
     const std::uint32_t now = osKernelGetTickCount();
 
-    // 1) 收：把队列里所有帧取出来
-    bsp::CanFrame rx{};
-    while (bsp::can1.recv(rx, 0) == common::Err::Ok) {
-      // 日志限速：每秒最多一条，避免刷屏把日志队列塞满
-      if ((now - last_log) >= 1000u) {
-        last_log = now;
-        const std::uint32_t peer_seq = rx.data[0] | (rx.data[1] << 8) |
-                                       (rx.data[2] << 16) | (rx.data[3] << 24);
-        LOG_I("rx id=0x%03lX len=%u seq=%lu", static_cast<unsigned long>(rx.id),
-              rx.len, static_cast<unsigned long>(peer_seq));
-      }
-    }
-
-    // 2) bus-off 恢复：先退避 500 ms，避免孤立节点反复霸占总线
-    if (bsp::can1.need_recovery()) {
-      osDelay(500);
-      const common::Err r = bsp::can1.recover();
-      LOG_W("can recover -> %s", common::to_str(r));
-    }
-
-    // 3) 发：每 100 ms 一帧
-    if ((now - last_tx) >= 100u) {
-      last_tx = now;
-      bsp::CanFrame f{};
-      f.id = kMyId;
-      f.len = 8;
-      f.data[0] = static_cast<std::uint8_t>(seq & 0xFF);
-      f.data[1] = static_cast<std::uint8_t>((seq >> 8) & 0xFF);
-      f.data[2] = static_cast<std::uint8_t>((seq >> 16) & 0xFF);
-      f.data[3] = static_cast<std::uint8_t>((seq >> 24) & 0xFF);
-      f.data[4] = 0xA5;
-      f.data[5] = 0x5A;
-      f.data[6] = static_cast<std::uint8_t>(kMyId & 0xFF);
-      f.data[7] = 0x00;
-      if (bsp::can1.send(f, 20) == common::Err::Ok) ++seq;
-    }
-
-    // 4) 统计：每 5 s 一条
-    if ((now - last_stats) >= 5000u) {
-      last_stats = now;
-      LOG_I("stats: tx=%lu rx=%lu drop=%lu err=%lu busoff=%lu logsent=%lu logdrop=%lu",
-            static_cast<unsigned long>(bsp::can1.tx_count()),
-            static_cast<unsigned long>(bsp::can1.rx_count()),
-            static_cast<unsigned long>(bsp::can1.rx_dropped()),
-            static_cast<unsigned long>(bsp::can1.error_count()),
-            static_cast<unsigned long>(bsp::can1.busoff_count()),
-            static_cast<unsigned long>(common::log_sent()),
-            static_cast<unsigned long>(common::log_dropped()));
-#ifdef LOG_OVERFLOW_TEST
-      // ??????:??? 40 ?,?????? 12,????
-      for (int i = 0; i < 40; ++i) {
-        LOG_I("burst %d", i);
-      }
-#endif
-      LOG_I("stack free: Comm=%lu Sensor=%lu",
-            static_cast<unsigned long>(osThreadGetStackSpace(g_comm_id)),
-            static_cast<unsigned long>(osThreadGetStackSpace(g_sensor_id)));
-    }
-
-    osDelay(1);
-  }
-}
-
-// -------------------------------------------------------------- Sensor 任务
-void sensor_task(void* arg)
-{
-  (void)arg;
-  osDelay(300);
-
-  common::Err e = g_mpu.init();
-  LOG_I("mpu init -> %s", common::to_str(e));
-  if (e != common::Err::Ok) {
-    LOG_W("mpu init failed, try bus recovery");
-    (void)bsp::i2c1.recover_bus();
-  }
-
-  std::uint32_t last_log = 0;
-  std::uint32_t lost = 0;
-
-  for (;;) {
     module::Mpu6050::Raw raw{};
     const common::Err r = g_mpu.read_raw(raw);
-    if (r != common::Err::Ok) {
-      ++lost;
-      if (lost == 1u) {   // 只报一次，避免刷屏
-        LOG_W("mpu read lost (%s), recovery...", common::to_str(r));
-        (void)bsp::i2c1.recover_bus();
+
+    if (r == common::Err::Ok) {
+      const common::Err st = g_att.update(raw, kDt);
+      ++frames;
+
+      if (!cal_logged && g_att.calibrated()) {
+        cal_logged = true;
+        const module::GyroBias b = g_att.bias();
+        // 整数打印：F103 的 newlib-nano 默认不带浮点 printf
+        LOG_I("calib done: gyro bias = [%d, %d, %d] mdps",
+              (int)(b.x * 1000.0f), (int)(b.y * 1000.0f), (int)(b.z * 1000.0f));
+      }
+
+      if (st == common::Err::Ok && (frames % kOutputDiv) == 0) {
+        const module::Euler eu = g_att.euler();
+        char line[48];
+        const int n = std::snprintf(line, sizeof(line), "A,%d,%d,%d\r\n", cd(eu.yaw),
+                                    cd(eu.pitch), cd(eu.roll));
+        if (n > 0) {
+          // DMA 发送，不阻塞采样节拍；上一帧没发完就丢弃本次
+          if (bsp::uart1.write_async(reinterpret_cast<const std::uint8_t*>(line),
+                                     static_cast<std::size_t>(n)) == common::Err::Ok) {
+            ++sent;
+          } else {
+            ++dropped;
+          }
+        }
       }
     } else {
-      lost = 0;
-      const std::uint32_t now = osKernelGetTickCount();
-      if ((now - last_log) >= 1000u) {   // 5 ms 采样，1 Hz 打印
-        last_log = now;
-        LOG_I("acc[%d,%d,%d] gyro[%d,%d,%d]", raw.ax, raw.ay, raw.az, raw.gx,
-              raw.gy, raw.gz);
-      }
+      LOG_W("mpu read failed: %s", common::to_str(r));
+      (void)bsp::i2c1.recover_bus();
     }
-    osDelay(5);
+
+    // 3) 每秒统计：实际采样率、发送数、丢弃数、当前角度（0.01°）
+    if ((now - last_stats) >= 1000u) {
+      const std::uint32_t span = now - last_stats;
+      last_stats = now;
+      const module::Euler eu = g_att.euler();
+      LOG_I("att %luHz samp=%lu sent=%lu drop=%lu | yaw=%d pitch=%d roll=%d (cd) alpha_m=%d",
+            (unsigned long)(frames * 1000u / (now - t_start ? (now - t_start) : 1u)),
+            (unsigned long)frames, (unsigned long)sent, (unsigned long)dropped,
+            cd(eu.yaw), cd(eu.pitch), cd(eu.roll), (int)(g_att.alpha() * 1000.0f));
+      (void)span;
+    }
+
+    // 4) 严格 5 ms 周期
+    osDelayUntil(now + kSamplePeriodMs);
   }
 }
 
@@ -159,21 +121,12 @@ void sensor_task(void* arg)
 
 extern "C" void app_init(void)
 {
-  common::log_init();     // 先建日志队列 + Log 任务
-  LOG_I("app layer ready (C++17, HAL-free)");
+  common::log_init();
+  LOG_I("task02 stage-1: attitude estimation");
 
-  // CAN：只放行对端 ID（硬件过滤，自己发的帧不会回环进队列）
-  const common::Err ce = bsp::can1.start(kPeerId);
-  LOG_I("can start -> %s (accept id=0x%03lX)", common::to_str(ce),
-        static_cast<unsigned long>(kPeerId));
-
-  const osThreadAttr_t comm_attr = {
-      .name = "Comm", .stack_size = kCommStack, .priority = osPriorityAboveNormal};
-  g_comm_id = osThreadNew(comm_task, nullptr, &comm_attr);
-  if (g_comm_id == nullptr) LOG_E("create Comm failed");
-
-  const osThreadAttr_t sensor_attr = {
-      .name = "Sensor", .stack_size = 1024, .priority = osPriorityNormal};
-  g_sensor_id = osThreadNew(sensor_task, nullptr, &sensor_attr);
-  if (g_sensor_id == nullptr) LOG_E("create Sensor failed");
+  const osThreadAttr_t attr = {
+      .name = "Attitude", .stack_size = 2048, .priority = osPriorityAboveNormal};
+  if (osThreadNew(attitude_task, nullptr, &attr) == nullptr) {
+    LOG_E("create Attitude task failed");
+  }
 }
