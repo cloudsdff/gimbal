@@ -7,6 +7,8 @@
 #ifndef BSP_UART_IMPL_HPP
 #define BSP_UART_IMPL_HPP
 
+#include <cstdint>
+
 #include "uart.hpp"
 
 namespace bsp {
@@ -16,6 +18,13 @@ extern Uart& uart1;
 
 /// 由 HAL 的发送完成回调转调（内部使用）
 void uart1_on_tx_cplt();
+
+/// ????:??(???)????(DMA)?? USART1,?????
+void uart1_tx_lock();
+void uart1_tx_unlock();
+
+/// ????????(???????????)
+bool uart1_wait_idle(std::uint32_t timeout_ms);
 
 }  // namespace bsp
 

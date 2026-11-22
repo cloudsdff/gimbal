@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "bsp_uart.hpp"
 #include "cmsis_os2.h"
 #include "main.h"      // huart1 / HAL_GetTick()
 
@@ -36,13 +37,20 @@ const char* tag_of(LogLevel lv)
 }
 
 /// 直接写串口（只允许 Log 任务或内核启动前调用）
+///
+/// 关键：USART1 上还有"角度帧"在走 DMA（app 层以 50 Hz 发送）。
+/// 两个写者必须串行，否则日志行会被 A,... 插进中间（实测过）。
+/// 这里先抢 TX 锁、等 DMA 空闲，再逐字节阻塞写。
 void emit(const char* s)
 {
+  bsp::uart1_tx_lock();
+  (void)bsp::uart1_wait_idle(50);
   while (*s != '\0') {
     std::uint8_t ch = static_cast<std::uint8_t>(*s);
     (void)HAL_UART_Transmit(&huart1, &ch, 1, 10);
     ++s;
   }
+  bsp::uart1_tx_unlock();
 }
 
 /// Log 任务：从队列取字符串，慢慢发给串口

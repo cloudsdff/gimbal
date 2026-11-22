@@ -395,7 +395,12 @@ class App:
 
         self.scope.redraw()
 
+        # 每 5 秒自动重扫串口（未连接时），插拔设备不用手动点刷新
         now = time.time()
+        if (not self.reader) and (now - getattr(self, "_last_port_scan", 0.0) >= 5.0):
+            self._last_port_scan = now
+            self.refresh_ports()
+
         if now - self.last_fps_t >= 1.0:
             fps = (self.frames - self.last_fps_frames) / (now - self.last_fps_t)
             self.last_fps_t = now
