@@ -26,6 +26,9 @@
 namespace module {
 namespace {
 
+/// 积分泄漏系数：误差为 0 时每步乘一次，200 Hz 下约 1 秒衰减到 2%
+constexpr float kIntegLeak = 0.98f;
+
 inline float clampf(float v, float lo, float hi)
 {
   if (v < lo) return lo;
@@ -96,11 +99,12 @@ common::Err Gimbal::update(const Euler& att, const Rates& rates, float dt_s)
 common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float rate,
                               float dt)
 {
-  const float e_ang = target - angle;
+  float e_ang = target - angle;
 
-  // 死区：误差很小就保持输出，避免舵机为了一点点误差来回抽动
+  // 死区：误差很小时把误差当作 0（而不是直接返回），
+  // 否则输出会被"锁死"在上一次的值 —— 实测过：目标回 0 后舵机停在偏置位不动
   if (e_ang < gains_.deadband_deg && e_ang > -gains_.deadband_deg) {
-    return common::Err::Ok;
+    e_ang = 0.0f;
   }
 
   // 角度环 P → 角速度参考
@@ -113,6 +117,12 @@ common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float ra
   // 积分（用角度误差，保证稳态无差；带限幅防饱和）
   st.integ += gains_.ki * e_ang * dt;
   st.integ = clampf(st.integ, -gains_.out_max_deg, gains_.out_max_deg);
+
+  // 积分泄漏：误差为 0 时让积分缓慢回零，
+  // 否则目标回到 0 后舵机会永远停在"上一次的偏置"上（实测：停在偏 3° 处不下来）
+  if (e_ang == 0.0f) {
+    st.integ *= kIntegLeak;
+  }
 
   // 内环输出
   float out = gains_.kd * e_rate + st.integ;

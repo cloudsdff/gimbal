@@ -206,6 +206,7 @@ void attitude_task(void* arg)
 extern "C" void app_init(void)
 {
   common::log_init();
+  bsp::uart1_start_rx();   // 关键：启动串口中断接收，否则指令永远收不到
   LOG_I("task02: attitude + gimbal control");
 
   const osThreadAttr_t attr = {
