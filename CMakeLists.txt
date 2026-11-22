@@ -58,9 +58,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     common/log.cpp
     common/rtos_hooks.c
     bsp/bsp_i2c.cpp
+    bsp/bsp_pwm.cpp
     # bsp/bsp_can.cpp   ← 任务02 阶段一不需要 CAN，先不编译（源码保留，后续要 CAN 时取消注释）
     modules/mpu6050/mpu6050.cpp
     modules/attitude/attitude.cpp
+    modules/servo/servo.cpp
+    modules/gimbal/gimbal.cpp
 )
 
 # Add include paths
@@ -72,6 +75,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/modules
     ${CMAKE_SOURCE_DIR}/modules/mpu6050
     ${CMAKE_SOURCE_DIR}/modules/attitude
+    ${CMAKE_SOURCE_DIR}/modules/servo
+    ${CMAKE_SOURCE_DIR}/modules/gimbal
 )
 
 # Add project symbols (macros)

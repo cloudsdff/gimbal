@@ -19,12 +19,20 @@ extern Uart& uart1;
 /// 由 HAL 的发送完成回调转调（内部使用）
 void uart1_on_tx_cplt();
 
-/// ????:??(???)????(DMA)?? USART1,?????
+// ---- 发送串行化 ----
+// USART1 上有两个写者：异步日志（阻塞写）和角度帧（DMA）。
+// 一条物理链路只能有一个"当前所有者"，否则字节流会交织（实测过）。
 void uart1_tx_lock();
 void uart1_tx_unlock();
-
-/// ????????(???????????)
 bool uart1_wait_idle(std::uint32_t timeout_ms);
+
+// ---- 中断接收（串口指令用）----
+// 轮询式 HAL_UART_Receive(timeout=0) 读不到字节，必须用中断 + 环形缓冲。
+void uart1_start_rx();
+void uart1_on_rx_byte();
+
+/// ????????(???)
+std::uint32_t uart1_rx_count();
 
 }  // namespace bsp
 

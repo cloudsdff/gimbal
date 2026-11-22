@@ -38,7 +38,7 @@ UART_HandleTypeDef* const kHuart = &huart1;
 std::uint8_t g_tx_buf[kTxBufSize];
 volatile bool g_tx_busy = false;
 
-// ????:??????????? DMA,??????
+// ????:????????? DMA ?? USART1
 osMutexId_t g_tx_mutex = nullptr;
 
 void ensure_mutex()
@@ -46,7 +46,16 @@ void ensure_mutex()
   if (g_tx_mutex == nullptr) {
     g_tx_mutex = osMutexNew(nullptr);
   }
-}          // DMA 是否正在发送
+}
+
+// ---- 中断接收环形缓冲（串口指令用，非阻塞读取）----
+constexpr std::size_t kRxRingSize = 128;
+volatile std::uint8_t g_rx_ring[kRxRingSize];
+volatile std::uint32_t g_rx_head = 0;
+volatile std::uint32_t g_rx_tail = 0;
+std::uint8_t g_rx_byte = 0;
+bool g_rx_armed = false;
+volatile std::uint32_t g_rx_count = 0;          // DMA 是否正在发送
 
 }  // namespace
 
@@ -65,8 +74,11 @@ class Uart1 final : public Uart {
       return common::Err::Busy;
     }
 
+    // 关键：阻塞写期间同样置"总线占用"，否则 write_async 会在这段时间插进来
+    g_tx_busy = true;
     const auto st = HAL_UART_Transmit(kHuart, const_cast<std::uint8_t*>(data),
                                       static_cast<std::uint16_t>(len), timeout_ms);
+    g_tx_busy = false;
     uart1_tx_unlock();
     if (st == HAL_OK) return common::Err::Ok;
     if (st == HAL_TIMEOUT) return common::Err::Timeout;
@@ -105,11 +117,29 @@ class Uart1 final : public Uart {
     if (buf == nullptr || len == 0) return common::Err::InvalidParam;
     if (len > 0xFFFFu) return common::Err::InvalidParam;
 
-    const auto st = HAL_UART_Receive(kHuart, buf, static_cast<std::uint16_t>(len),
-                                     timeout_ms);
-    if (st == HAL_OK) return common::Err::Ok;
-    if (st == HAL_TIMEOUT) return common::Err::Timeout;
-    return common::Err::BusError;
+    // 优先从中断接收环形缓冲取（非阻塞，timeout=0 也能用）
+    const std::uint32_t t0 = HAL_GetTick();
+    std::size_t got = 0;
+    while (got < len) {
+      if (g_rx_head != g_rx_tail) {
+        buf[got++] = g_rx_ring[g_rx_tail];
+        g_rx_tail = (g_rx_tail + 1) % kRxRingSize;
+        continue;
+      }
+      if ((HAL_GetTick() - t0) >= timeout_ms) break;
+      osDelay(1);
+    }
+    if (got == len) return common::Err::Ok;
+
+    // 环形缓冲没数据时，退化为阻塞读（保留原语义）
+    if (got == 0 && timeout_ms > 0) {
+      const auto st = HAL_UART_Receive(kHuart, buf, static_cast<std::uint16_t>(len),
+                                       timeout_ms);
+      if (st == HAL_OK) return common::Err::Ok;
+      if (st == HAL_TIMEOUT) return common::Err::Timeout;
+      return common::Err::BusError;
+    }
+    return common::Err::Timeout;
   }
 
   bool is_idle() const override { return !g_tx_busy; }
@@ -147,6 +177,30 @@ bool uart1_wait_idle(std::uint32_t timeout_ms)
   }
   return true;
 }
+
+/// 启动中断接收（在 app_init 里调一次）
+void uart1_start_rx()
+{
+  if (!g_rx_armed) {
+    g_rx_armed = true;
+    const HAL_StatusTypeDef st = HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1);
+    LOG_I("uart rx armed: st=%d", (int)st);
+  }
+}
+
+/// 由中断回调调用：存一个字节并重新武装
+void uart1_on_rx_byte()
+{
+  ++g_rx_count;
+  const std::uint32_t next = (g_rx_head + 1) % kRxRingSize;
+  if (next != g_rx_tail) {           // ??????,??????
+    g_rx_ring[g_rx_head] = g_rx_byte;
+    g_rx_head = next;
+  }
+  (void)HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1);
+}
+std::uint32_t uart1_rx_count() { return g_rx_count; }
+
 }  // namespace bsp
 
 /* -------------------------------------------------------------------------
@@ -169,4 +223,10 @@ extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
   if (huart == &huart1) {
     bsp::uart1_on_tx_cplt();
   }
+}
+/* -------------------- HAL ??(?????) -------------------- */
+
+extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
+{
+  if (huart == &huart1) bsp::uart1_on_rx_byte();
 }
