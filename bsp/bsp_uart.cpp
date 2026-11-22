@@ -18,6 +18,7 @@
 
 #include <cstring>
 
+#include "cmsis_os2.h"
 #include "main.h"           // huart1 / HAL 声明
 #include "log.hpp"          // common/ 已在 include 路径里
 
@@ -35,7 +36,17 @@ constexpr std::size_t kTxBufSize = 256;   // 内部发送缓冲（占 256 B RAM�
 UART_HandleTypeDef* const kHuart = &huart1;
 
 std::uint8_t g_tx_buf[kTxBufSize];
-volatile bool g_tx_busy = false;          // DMA 是否正在发送
+volatile bool g_tx_busy = false;
+
+// ????:??????????? DMA,??????
+osMutexId_t g_tx_mutex = nullptr;
+
+void ensure_mutex()
+{
+  if (g_tx_mutex == nullptr) {
+    g_tx_mutex = osMutexNew(nullptr);
+  }
+}          // DMA 是否正在发送
 
 }  // namespace
 
@@ -46,10 +57,17 @@ class Uart1 final : public Uart {
   {
     if (data == nullptr || len == 0) return common::Err::InvalidParam;
     if (len > 0xFFFFu) return common::Err::InvalidParam;   // HAL 长度参数是 uint16_t
-    if (g_tx_busy) return common::Err::Busy;
+
+    // 串行化：等上一帧 DMA 发完，再拿锁做阻塞写
+    uart1_tx_lock();
+    if (!uart1_wait_idle(timeout_ms)) {
+      uart1_tx_unlock();
+      return common::Err::Busy;
+    }
 
     const auto st = HAL_UART_Transmit(kHuart, const_cast<std::uint8_t*>(data),
                                       static_cast<std::uint16_t>(len), timeout_ms);
+    uart1_tx_unlock();
     if (st == HAL_OK) return common::Err::Ok;
     if (st == HAL_TIMEOUT) return common::Err::Timeout;
     return common::Err::BusError;
@@ -60,7 +78,12 @@ class Uart1 final : public Uart {
     if (data == nullptr || len == 0) return common::Err::InvalidParam;
     if (len > kTxBufSize) return common::Err::Overflow;    // 明确告知装不下，不静默截断
     if (kHuart->hdmatx == nullptr) return common::Err::NotInit;  // CubeMX 里没开 DMA
-    if (g_tx_busy) return common::Err::Busy;               // 上一帧没发完
+
+    uart1_tx_lock();
+    if (g_tx_busy) {                                       // 上一帧没发完
+      uart1_tx_unlock();
+      return common::Err::Busy;
+    }
 
     // 先拷进内部缓冲：DMA 在后台读这块内存，调用方的缓冲随时可能被复用
     std::memcpy(g_tx_buf, data, len);
@@ -68,6 +91,7 @@ class Uart1 final : public Uart {
 
     const auto st = HAL_UART_Transmit_DMA(kHuart, g_tx_buf,
                                           static_cast<std::uint16_t>(len));
+    uart1_tx_unlock();
     if (st != HAL_OK) {
       g_tx_busy = false;                                   // 启动失败要把标志还原
       return common::Err::BusError;
@@ -102,6 +126,27 @@ Uart& uart1 = g_uart1;
 
 void uart1_on_tx_cplt() { g_uart1.on_tx_cplt(); }
 
+
+void uart1_tx_lock()
+{
+  ensure_mutex();
+  if (g_tx_mutex) (void)osMutexAcquire(g_tx_mutex, 200);
+}
+
+void uart1_tx_unlock()
+{
+  if (g_tx_mutex) (void)osMutexRelease(g_tx_mutex);
+}
+
+bool uart1_wait_idle(std::uint32_t timeout_ms)
+{
+  const std::uint32_t t0 = HAL_GetTick();
+  while (g_tx_busy) {
+    if ((HAL_GetTick() - t0) > timeout_ms) return false;
+    for (volatile int i = 0; i < 200; ++i) {}   // ???(???????????)
+  }
+  return true;
+}
 }  // namespace bsp
 
 /* -------------------------------------------------------------------------

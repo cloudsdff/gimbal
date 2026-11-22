@@ -43,13 +43,15 @@ void attitude_task(void* arg)
 {
   (void)arg;
 
-  // 1) 传感器初始化
-  const common::Err e = g_mpu.init();
-  LOG_I("mpu init -> %s", common::to_str(e));
-  if (e != common::Err::Ok) {
-    LOG_E("mpu6050 unavailable, attitude task halted");
-    for (;;) osDelay(1000);
+  // 1) 传感器初始化（失败不退出，每 2 秒重试一次 —— 线接好就能自己恢复）
+  common::Err e = g_mpu.init();
+  while (e != common::Err::Ok) {
+    LOG_E("mpu init -> %s, retry in 2s (check VCC/GND/SCL=B6/SDA=B7)", common::to_str(e));
+    osDelay(2000);
+    (void)bsp::i2c1.recover_bus();
+    e = g_mpu.init();
   }
+  LOG_I("mpu init -> Ok");
 
   // 2) 上电自校准
   g_att.begin_calibration(kCalSamples);

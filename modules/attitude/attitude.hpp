@@ -98,12 +98,19 @@ class Attitude {
   GyroBias bias_{};
   float deadband_dps_ = 0.3f;   ///< 静止死区，抑制零漂
 
+  /// 加速度计"零姿态"偏移：上电时板子未必水平、模块本身也有零偏，
+  /// 校准期间把两者的平均值记下来，之后从加速度角里减掉（否则平放时 pitch 不为 0）
+  float offset_roll_ = 0.0f;
+  float offset_pitch_ = 0.0f;
+
   CalState cal_state_ = CalState::Idle;
   std::uint16_t cal_target_ = 0;
   std::uint16_t cal_count_ = 0;
   float cal_sum_x_ = 0.0f;
   float cal_sum_y_ = 0.0f;
   float cal_sum_z_ = 0.0f;
+  float cal_sum_roll_ = 0.0f;
+  float cal_sum_pitch_ = 0.0f;
 };
 
 }  // namespace module

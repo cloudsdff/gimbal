@@ -91,12 +91,17 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
     cal_sum_x_ += gx;
     cal_sum_y_ += gy;
     cal_sum_z_ += gz;
+    // 同时累积"加速度角"，用于记录零姿态（板子未必水平 + 模块自身零偏）
+    cal_sum_roll_ += std::atan2(ay, az) * kRadToDeg;
+    cal_sum_pitch_ += std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg;
     ++cal_count_;
     if (cal_count_ >= cal_target_) {
       const float inv = 1.0f / static_cast<float>(cal_count_);
       bias_.x = cal_sum_x_ * inv;
       bias_.y = cal_sum_y_ * inv;
       bias_.z = cal_sum_z_ * inv;
+      offset_roll_ = cal_sum_roll_ * inv;
+      offset_pitch_ = cal_sum_pitch_ * inv;
       cal_state_ = CalState::Done;
       reset();
     }
@@ -108,9 +113,11 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
   const float gy_d = deadband(gy - bias_.y, deadband_dps_);
   const float gz_d = deadband(gz - bias_.z, deadband_dps_);
 
-  // ---------- 加速度计角度 ----------
-  const float roll_acc = std::atan2(ay, az) * kRadToDeg;
-  const float pitch_acc = std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg;
+  // ---------- 加速度计角度（扣除"零姿态"偏移）----------
+  // 不扣的话：板子放得不平、模块自身有零偏，平放时 pitch 会是 8° 之类的假值
+  const float roll_acc = std::atan2(ay, az) * kRadToDeg - offset_roll_;
+  const float pitch_acc =
+      std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg - offset_pitch_;
 
   // ---------- 互补滤波 ----------
   euler_.roll = alpha_ * (euler_.roll + gx_d * dt_s) + (1.0f - alpha_) * roll_acc;
