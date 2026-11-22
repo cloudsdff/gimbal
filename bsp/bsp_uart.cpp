@@ -36,7 +36,8 @@ constexpr std::size_t kTxBufSize = 256;   // 内部发送缓冲（占 256 B RAM�
 UART_HandleTypeDef* const kHuart = &huart1;
 
 std::uint8_t g_tx_buf[kTxBufSize];
-volatile bool g_tx_busy = false;
+volatile bool g_tx_busy = false;   // ?????(DMA ????)
+volatile bool g_dma_active = false; // DMA ??????(?????)
 
 // ????:????????? DMA ?? USART1
 osMutexId_t g_tx_mutex = nullptr;
@@ -100,11 +101,13 @@ class Uart1 final : public Uart {
     // 先拷进内部缓冲：DMA 在后台读这块内存，调用方的缓冲随时可能被复用
     std::memcpy(g_tx_buf, data, len);
     g_tx_busy = true;
+    g_dma_active = true;
 
     const auto st = HAL_UART_Transmit_DMA(kHuart, g_tx_buf,
                                           static_cast<std::uint16_t>(len));
     uart1_tx_unlock();
     if (st != HAL_OK) {
+      g_dma_active = false;
       g_tx_busy = false;                                   // 启动失败要把标志还原
       return common::Err::BusError;
     }
@@ -145,7 +148,15 @@ class Uart1 final : public Uart {
   bool is_idle() const override { return !g_tx_busy; }
 
   /// 由 HAL 的发送完成回调调用（中断上下文，只清标志）
-  void on_tx_cplt() { g_tx_busy = false; }
+  void on_tx_cplt()
+  {
+    // ??????? DMA ??,??????;
+    // ????'?????'????????,??????(???)
+    if (g_dma_active) {
+      g_dma_active = false;
+      g_tx_busy = false;
+    }
+  }
 };
 
 namespace {

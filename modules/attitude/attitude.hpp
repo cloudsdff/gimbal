@@ -103,9 +103,13 @@ class Attitude {
   float offset_roll_ = 0.0f;
   float offset_pitch_ = 0.0f;
 
+  /// 校准期间允许的最大角速度（dps）：超过说明板子在被碰，本帧作废
+  static constexpr float kCalMaxRateDps = 20.0f;
+
   CalState cal_state_ = CalState::Idle;
   std::uint16_t cal_target_ = 0;
   std::uint16_t cal_count_ = 0;
+  std::uint16_t cal_rejected_ = 0;   ///< 被拒的采样次数（板子动了）
   float cal_sum_x_ = 0.0f;
   float cal_sum_y_ = 0.0f;
   float cal_sum_z_ = 0.0f;

@@ -88,6 +88,16 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
 
   // ---------- 上电自校准：静止采样求零偏 ----------
   if (cal_state_ == CalState::Sampling) {
+    // 静止校验：角速度太大说明板子在被碰，这一帧的加速度角不可信
+    const float rate_mag = std::sqrt(gx * gx + gy * gy + gz * gz);
+    if (rate_mag > kCalMaxRateDps) {
+      ++cal_rejected_;
+      cal_sum_x_ = cal_sum_y_ = cal_sum_z_ = 0.0f;
+      cal_sum_roll_ = cal_sum_pitch_ = 0.0f;
+      cal_count_ = 0;
+      return common::Err::Busy;   // 丢弃本次采样，重新开始
+    }
+
     cal_sum_x_ += gx;
     cal_sum_y_ += gy;
     cal_sum_z_ += gz;
