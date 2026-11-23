@@ -114,9 +114,19 @@ common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float ra
   // 角速度误差（内环）
   const float e_rate = rate_ref - rate;
 
-  // 积分（用角度误差，保证稳态无差；带限幅防饱和）
-  st.integ += gains_.ki * e_ang * dt;
-  st.integ = clampf(st.integ, -gains_.out_max_deg, gains_.out_max_deg);
+  // 内环比例输出
+  const float out_p = gains_.kd * e_rate;
+
+  // 抗积分饱和（conditional integration）：
+  // 只有"输出还没顶到限幅"时才积分。
+  // 不加这一条的话，舵机被机械限位挡住 / 负载卡住时，
+  // 误差一直存在 → 积分一直加 → 一旦松开就猛冲过去（实测：积分顶到 35° 上限，
+  // 云台回正后舵机仍停在偏 34° 的位置不肯回来）。
+  const float pre = out_p + st.integ;
+  if (pre < gains_.out_max_deg && pre > -gains_.out_max_deg) {
+    st.integ += gains_.ki * e_ang * dt;
+    st.integ = clampf(st.integ, -gains_.out_max_deg, gains_.out_max_deg);
+  }
 
   // 积分泄漏：误差为 0 时让积分缓慢回零，
   // 否则目标回到 0 后舵机会永远停在"上一次的偏置"上（实测：停在偏 3° 处不下来）
@@ -125,7 +135,7 @@ common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float ra
   }
 
   // 内环输出
-  float out = gains_.kd * e_rate + st.integ;
+  float out = out_p + st.integ;
   out = clampf(out, -gains_.out_max_deg, gains_.out_max_deg);
   st.out = out;
   return common::Err::Ok;
