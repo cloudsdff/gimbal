@@ -85,9 +85,9 @@ common::Err Gimbal::update(const Euler& att, const Rates& rates, float dt_s)
   out_[0] = ax_[0].out;
   out_[1] = ax_[1].out;
 
-  // 输出到舵机：中位 + 偏置
-  (void)yaw_.set_target(center_deg_ + out_[0]);
-  (void)pitch_.set_target(center_deg_ + out_[1]);
+  // 输出到舵机：中位 + 偏置（乘方向系数，装配后可在线取反）
+  (void)yaw_.set_target(center_deg_ + sign_[0] * out_[0]);
+  (void)pitch_.set_target(center_deg_ + sign_[1] * out_[1]);
 
   // 推动斜率限制（缓启动就在这里生效）
   (void)yaw_.update(dt_s);
