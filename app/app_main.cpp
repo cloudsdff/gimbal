@@ -85,6 +85,13 @@ void handle_command(const char* line)
     // B,<baud>:??????(HC-05 ?? 9600 ??,??? AT ??)
     const int baud = std::atoi(line + 2);
     LOG_I("cmd bt baud -> %d : %s", baud, common::to_str(bsp::uart2_set_baud((std::uint32_t)baud)));
+  } else if (line[0] == 'S' && line[1] == ',') {
+    // S,<yaw_sign>,<pitch_sign>:????????? S,1,-1 ??
+    int sy = 1, sp = 1;
+    if (std::sscanf(line + 2, "%d,%d", &sy, &sp) == 2) {
+      g_gimbal.set_sign((float)sy, (float)sp);
+      LOG_I("cmd axis sign -> %d,%d", sy, sp);
+    }
   } else if (line[0] == 'C') {
     g_att.begin_calibration(kCalSamples);
     LOG_I("cmd recalibrate");

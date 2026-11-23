@@ -54,6 +54,14 @@ class Gimbal {
   /// 设置目标指向（相对零姿态的角度，单位度）
   void set_target(float yaw_deg, float pitch_deg);
   void set_gains(const Gains& g) { gains_ = g; }
+
+  /// ???:+1 ? -1??????????????(???),????????,
+  /// ????????????????
+  void set_sign(float yaw_sign, float pitch_sign)
+  {
+    sign_[0] = (yaw_sign < 0.0f) ? -1.0f : 1.0f;
+    sign_[1] = (pitch_sign < 0.0f) ? -1.0f : 1.0f;
+  }
   Gains gains() const { return gains_; }
 
   /// 200 Hz 调用：att 是当前姿态，rates 是陀螺角速度（dps）
@@ -80,6 +88,7 @@ class Gimbal {
   float target_[2]{};      ///< 目标角度（相对）
   float out_[2]{};         ///< 当前输出偏置（度）
   float center_deg_ = 90.0f;
+  float sign_[2] = {1.0f, 1.0f};   ///< axis direction (+1/-1)
   bool inited_ = false;
   bool enabled_ = true;
 };
