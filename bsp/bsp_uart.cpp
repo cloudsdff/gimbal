@@ -103,8 +103,15 @@ class Uart1 final : public Uart {
     g_tx_busy = true;
     g_dma_active = true;
 
-    const auto st = HAL_UART_Transmit_DMA(kHuart, g_tx_buf,
-                                          static_cast<std::uint16_t>(len));
+    HAL_StatusTypeDef st = HAL_UART_Transmit_DMA(kHuart, g_tx_buf,
+                                                 static_cast<std::uint16_t>(len));
+    if (st == HAL_BUSY) {
+      // ??:??????????????
+      g_dma_active = false;
+      g_tx_busy = false;
+      (void)HAL_UART_Abort(kHuart);
+      st = HAL_UART_Transmit_DMA(kHuart, g_tx_buf, static_cast<std::uint16_t>(len));
+    }
     uart1_tx_unlock();
     if (st != HAL_OK) {
       g_dma_active = false;

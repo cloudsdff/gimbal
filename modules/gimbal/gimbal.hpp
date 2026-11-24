@@ -55,8 +55,8 @@ class Gimbal {
   void set_target(float yaw_deg, float pitch_deg);
   void set_gains(const Gains& g) { gains_ = g; }
 
-  /// ???:+1 ? -1??????????????(???),????????,
-  /// ????????????????
+  /// 轴方向：+1 或 -1。装配后如果云台朝错误方向推（正反馈），
+  /// 把对应轴取反即可，不用改接线、也不用重新编译逻辑。
   void set_sign(float yaw_sign, float pitch_sign)
   {
     sign_[0] = (yaw_sign < 0.0f) ? -1.0f : 1.0f;
@@ -66,6 +66,13 @@ class Gimbal {
 
   /// 200 Hz 调用：att 是当前姿态，rates 是陀螺角速度（dps）
   common::Err update(const Euler& att, const Rates& rates, float dt_s);
+
+  /// 使能/禁止控制输出（禁止时舵机保持最后位置）
+  void set_enabled(bool on) { enabled_ = on; }
+  bool enabled() const { return enabled_; }
+
+  /// 从安全停机恢复
+  void resume() { enabled_ = true; }
 
   /// 急停：输出回中位并停止更新
   common::Err stop();

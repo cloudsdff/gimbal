@@ -92,6 +92,38 @@ void handle_command(const char* line)
       g_gimbal.set_sign((float)sy, (float)sp);
       LOG_I("cmd axis sign -> %d,%d", sy, sp);
     }
+  } else if (line[0] == 'P' && line[1] == ',') {
+    // P,<yaw_us>,<pitch_us>:?????????(500-2500),????????
+    int uy = 1500, up = 1500;
+    if (std::sscanf(line + 2, "%d,%d", &uy, &up) == 2) {
+      (void)g_gimbal.stop();          // ????,?????
+      (void)bsp::servo_pwm.set_pulse_us(1, (std::uint32_t)uy);
+      (void)bsp::servo_pwm.set_pulse_us(2, (std::uint32_t)up);
+      LOG_I("cmd openloop: yaw=%dus pitch=%dus", uy, up);
+    }
+  } else if (line[0] == 'G' && line[1] == ',') {
+    // G,<kp_x100>,<kd_x100>,<ki_x1000>:?????
+    int kp = 0, kd = 0, ki = 0;
+    if (std::sscanf(line + 2, "%d,%d,%d", &kp, &kd, &ki) == 3) {
+      module::Gimbal::Gains g = g_gimbal.gains();
+      g.kp = (float)kp / 100.0f;
+      g.kd = (float)kd / 100.0f;
+      g.ki = (float)ki / 1000.0f;
+      g_gimbal.set_gains(g);
+      LOG_I("cmd gains: kp=%d kd=%d ki=%d (x100/x100/x1000)", kp, kd, ki);
+    }
+  } else if (line[0] == 'F') {
+    // F:??"??????"??(roll ?? �180� ??)
+    g_att.set_mount_flip(!g_att.mount_flip());
+    LOG_I("cmd mount flip -> %d (now recalibrate with C)", g_att.mount_flip() ? 1 : 0);
+  } else if (line[0] == 'D') {
+    // D:??(??????),??????/??
+    (void)g_gimbal.stop();
+    LOG_I("cmd disable: gimbal stopped (send X to resume)");
+  } else if (line[0] == 'X') {
+    // X:???????(????????)
+    g_gimbal.resume();
+    LOG_I("cmd resume: gimbal enabled");
   } else if (line[0] == 'C') {
     g_att.begin_calibration(kCalSamples);
     LOG_I("cmd recalibrate");
@@ -150,6 +182,7 @@ void attitude_task(void* arg)
   const std::uint32_t t_start = osKernelGetTickCount();
   std::uint32_t last_stats = t_start;
   std::uint32_t frames = 0, sent = 0, dropped = 0;
+  std::uint32_t consecutive_fail = 0;   // consecutive read failures (safety stop)
   bool cal_logged = false;
 
   for (;;) {
@@ -209,8 +242,17 @@ void attitude_task(void* arg)
         }
       }
     } else {
-      LOG_W("mpu read failed: %s", common::to_str(r));
+      ++consecutive_fail;
+      LOG_W("mpu read failed: %s (consecutive=%lu)", common::to_str(r),
+            (unsigned long)consecutive_fail);
       (void)bsp::i2c1.recover_bus();
+
+      // 安全策略：传感器连续失效约 0.5 秒（100 帧）就自动停机。
+      // 不这么做会形成正反馈：角度算错 → 舵机全力纠正 → 大电流 → 干扰更大 → 更错
+      if (consecutive_fail >= 100 && g_gimbal.enabled()) {
+        (void)g_gimbal.stop();
+        LOG_E("safety stop: imu failed 100x, gimbal disabled (send X to resume)");
+      }
     }
 
     // 3.6 串口指令（调试口 + 蓝牙，每周期各读 1 字节，非阻塞）

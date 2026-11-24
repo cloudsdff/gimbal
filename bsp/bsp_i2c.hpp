@@ -15,6 +15,9 @@ extern I2c& i2c1;
 /// 由 HAL 回调转调（内部使用）：status 0 = 成功，1 = 出错
 void i2c1_on_async_done(int status);
 
+/// ?? PB6/PB7 ????(??/???)
+void i2c1_enable_internal_pullup();
+
 }  // namespace bsp
 
 #endif  // BSP_I2C_IMPL_HPP

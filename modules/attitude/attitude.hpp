@@ -79,6 +79,20 @@ class Attitude {
   void set_alpha(float a);
   float alpha() const { return alpha_; }
 
+  /**
+   * @brief 模块"翻面安装"补偿（绕 X 轴 180°）
+   *
+   * 现象：平台明明水平，roll 却读到 ±180° 附近 —— 说明模块的 +Z 轴朝下。
+   * 数学上等价于把坐标系绕 X 轴转 180°：x 不变，y/z 取反（加速度与角速度都是）。
+   * 有了这个开关就不用为了"翻个面"去拆胶带重装。
+   */
+  void set_mount_flip(bool flip)
+  {
+    flip_ = flip;
+    reset();
+  }
+  bool mount_flip() const { return flip_; }
+
   /// 死区（dps）：小于它的角速度视为静止，用于抑制零漂
   void set_gyro_deadband(float dps) { deadband_dps_ = dps; }
   float gyro_deadband() const { return deadband_dps_; }
@@ -94,6 +108,7 @@ class Attitude {
   float to_g(std::int16_t v) const { return static_cast<float>(v) / kAccelLsbPerG; }
 
   float alpha_;
+  bool flip_ = false;           ///< 模块翻面安装补偿（绕 X 轴 180°）
   Euler euler_{};
   GyroBias bias_{};
   float deadband_dps_ = 0.3f;   ///< 静止死区，抑制零漂
