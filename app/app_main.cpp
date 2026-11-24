@@ -256,8 +256,13 @@ void attitude_task(void* arg)
       }
     } else {
       ++consecutive_fail;
-      LOG_W("mpu read failed: %s (consecutive=%lu)", common::to_str(r),
-            (unsigned long)consecutive_fail);
+      // 日志限速：只在第 1、10、100、1000... 次失败时打印，
+      // 否则每秒 200 条会把串口淹没，真正有用的信息反而看不见
+      if (consecutive_fail == 1 || consecutive_fail == 10 || consecutive_fail == 100 ||
+          consecutive_fail == 1000 || (consecutive_fail % 5000) == 0) {
+        LOG_W("mpu read failed: %s (consecutive=%lu)", common::to_str(r),
+              (unsigned long)consecutive_fail);
+      }
       (void)bsp::i2c1.recover_bus();
 
       // 安全策略：传感器连续失效约 0.5 秒（100 帧）就自动停机。
