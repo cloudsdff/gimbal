@@ -222,11 +222,13 @@ void attitude_task(void* arg)
 
       if (st == common::Err::Ok) {
         // 3.2 角速度（扣零偏，单位 dps）
-        const module::GyroBias b = g_att.bias();
+        // 用姿态模块算好的角速度：它已经扣过零偏、也按安装方向取反过。
+        // 这里如果自己拿 raw 算，符号会和角度不一致，阻尼变成正反馈（踩过）。
+        const module::GyroBias& cr = g_att.corrected_rates();
         module::Rates rates{};
-        rates.yaw = static_cast<float>(raw.gz) / module::Attitude::kGyroLsbPerDps - b.z;
-        rates.pitch = static_cast<float>(raw.gy) / module::Attitude::kGyroLsbPerDps - b.y;
-        rates.roll = static_cast<float>(raw.gx) / module::Attitude::kGyroLsbPerDps - b.x;
+        rates.yaw = cr.z;
+        rates.pitch = cr.y;
+        rates.roll = cr.x;
 
         // 3.3 云台控制（200 Hz）
         (void)g_gimbal.update(g_att.euler(), rates, kDt);
