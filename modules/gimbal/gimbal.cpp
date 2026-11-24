@@ -135,7 +135,7 @@ common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float ra
   }
 
   // 内环输出
-  float out = out_p + st.integ + ff;   // ff = 重力前馈
+  float out = out_p + st.integ + ff + gains_.ff_scale * target;   // ff=重力前馈, ff_scale=传动比前馈
   out = clampf(out, -gains_.out_max_deg, gains_.out_max_deg);
   st.out = out;
   return common::Err::Ok;

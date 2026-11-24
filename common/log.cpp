@@ -28,7 +28,7 @@ namespace {
 // 一旦再长一点就会被截断 —— 连行尾的 \r\n 一起丢掉，
 // 后面的角度帧就接到同一行上，看起来像"串口交织"（实际是截断）。
 // 128 留足余量，代价是 12×32 = 384 B RAM。
-constexpr std::size_t kSlotSize = 128;
+constexpr std::size_t kSlotSize = 160;
 constexpr std::size_t kQueueDepth = 12;   // 12 × 128 = 1536 B RAM
 
 osMessageQueueId_t g_queue = nullptr;
