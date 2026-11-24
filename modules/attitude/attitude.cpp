@@ -101,12 +101,11 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
 
     // 静止校验：角速度太大说明板子在被碰，这一帧的加速度角不可信
     const float rate_mag = std::sqrt(gx * gx + gy * gy + gz * gz);
+    // 振动只统计、不丢弃采样：振动是零均值的，直接对窗口求平均就是零偏估计。
+    // 之前这里一旦超阈值就清空累加重来 —— 云台一开始闭环微调就永远凑不满
+    // 采样数，零偏没扣掉，-8 dps 积分 10 秒漂 80°，姿态直接发散（实测踩过）。
     if (rate_mag > kCalMaxRateDps) {
       ++cal_rejected_;
-      cal_sum_x_ = cal_sum_y_ = cal_sum_z_ = 0.0f;
-      cal_sum_roll_ = cal_sum_pitch_ = 0.0f;
-      cal_count_ = 0;
-      return common::Err::Busy;   // 丢弃本次采样，重新开始
     }
 
     cal_sum_x_ += gx;
@@ -120,7 +119,7 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
     // 超时强制完成：如果因为持续振动一直凑不满目标帧数，
     // 累计到 1500 帧（7.5 秒）且已有 20 帧以上，就用现有数据完成校准。
     // 不加这个保护的话，稍微有点振动就会"永远在校准中"，角度完全不更新（踩过）。
-    const bool timeout_ok = (cal_total_frames_ >= 1500 && cal_count_ >= 20);
+    const bool timeout_ok = (cal_total_frames_ >= 200 && cal_count_ >= 20);
 
     if (cal_count_ >= cal_target_ || timeout_ok) {
       const float inv = 1.0f / static_cast<float>(cal_count_);

@@ -20,6 +20,7 @@
 #include "attitude.hpp"
 #include "bluetooth.hpp"
 #include "bsp_i2c.hpp"
+#include "bsp_i2c_soft.hpp"
 #include "pwm.hpp"
 #include "bsp_uart.hpp"
 #include "cmsis_os2.h"
@@ -40,7 +41,8 @@ constexpr int kAngleDiv = 4;      // 每 4 帧 → 50 Hz 角度帧
 constexpr int kServoDiv = 20;     // 每 20 帧 → 10 Hz 舵机帧
 constexpr std::uint16_t kCalSamples = 200;
 
-module::Mpu6050 g_mpu(bsp::i2c1);
+// 用软件 I2C：硬件 I2C 在舵机干扰下会卡死在 BUSY（实测 11 次），bit-bang 没有这个状态
+module::Mpu6050 g_mpu(bsp::soft_i2c);
 module::Attitude g_att(0.98f);
 module::Servo g_servo_yaw(bsp::servo_pwm, 1);
 module::Servo g_servo_pitch(bsp::servo_pwm, 2);
@@ -177,16 +179,18 @@ void attitude_task(void* arg)
   LOG_I("bluetooth init -> %s", common::to_str(g_bt_init));
 
   // ---- 1) 传感器 ----
+  // 软件 I2C 的引脚必须先配好（PB6/PB7 开漏输出），否则 bit-bang 驱动不了总线
+  bsp::SoftI2c::init_pins();
+  LOG_I("soft i2c pins ready (PB6=SCL PB7=SDA, bit-bang)");
   common::Err e = g_mpu.init();
   int retry = 0;
   while (e != common::Err::Ok) {
     // (comment cleaned)
     if (++retry == 2) {
-      (void)bsp::i2c1_set_speed(50000);
     }
     LOG_E("mpu init -> %s, retry in 2s (check VCC/GND/SCL=B6/SDA=B7)", common::to_str(e));
     osDelay(2000);
-    (void)bsp::i2c1.recover_bus();
+    (void)bsp::soft_i2c.recover_bus();
     e = g_mpu.init();
   }
   LOG_I("mpu init -> Ok");
@@ -281,12 +285,14 @@ void attitude_task(void* arg)
         LOG_W("mpu read failed: %s (consecutive=%lu)", common::to_str(r),
               (unsigned long)consecutive_fail);
       }
-      // 恢复函数限速：每 200 ms 最多一次。
-      // 不限速的话每帧都做一次 9 时钟 + STOP + 软复位，CPU 全耗在这里，
-      // 表现为采样率掉到 60 Hz、日志把串口刷爆（实测过）
-      if ((now - last_recover) >= 200u) {
+      // 每帧都尝试恢复（恢复本身只要几十微秒），
+      // 但只把恢复动作记进日志、且日志限速 500 ms 一次。
+      // 之前把"恢复动作"本身限速到 200 ms，结果出错后 200 ms 内的读全白费，
+      // 采样率从 100 Hz 掉到 12 Hz（实测）。限速的对象应该是日志，不是恢复。
+      (void)bsp::soft_i2c.recover_bus();
+      if ((now - last_recover) >= 500u) {
         last_recover = now;
-        (void)bsp::i2c1.recover_bus();
+        LOG_W("i2c read failed, recovering (bus reset every frame)");
       }
 
       // 安全策略：传感器连续失效约 0.5 秒（100 帧）就自动停机。

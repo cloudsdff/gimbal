@@ -53,6 +53,10 @@ class Gimbal {
     /// 实测这套云台的连杆传动比约 0.36，所以舵机要多转约 2.8 倍。
     /// 用前馈把这块增益补上，反馈只需要修正残差，增益就能压得很低、不振荡。
     float ff_scale = 0.0f;
+    /// 积分限幅（度）。积分只该用来消除静态偏差，不需要占满整个输出范围。
+    /// 之前限幅用的是 out_max（35°），一旦顶死就再也拉不回来 —— 实测平台被
+    /// 顶在机械下限不动，因为积分一直是 -35°。
+    float integ_max_deg = 5.0f;
   };
 
   Gimbal(Servo& yaw, Servo& pitch) : yaw_(yaw), pitch_(pitch) {}
@@ -76,11 +80,25 @@ class Gimbal {
   common::Err update(const Euler& att, const Rates& rates, float dt_s);
 
   /// 使能/禁止控制输出（禁止时舵机保持最后位置）
-  void set_enabled(bool on) { enabled_ = on; }
+  void set_enabled(bool on)
+  {
+    if (on) {
+      ax_[0].integ = 0.0f;
+      ax_[1].integ = 0.0f;
+    }
+    enabled_ = on;
+  }
   bool enabled() const { return enabled_; }
 
   /// 从安全停机恢复
-  void resume() { enabled_ = true; }
+  void resume()
+  {
+    // 使能前把积分清零：上一次运行残留的积分会把输出直接顶到限幅
+    // （实测：平台被顶在机械下限不动，因为积分还停在 -35°）
+    ax_[0].integ = 0.0f;
+    ax_[1].integ = 0.0f;
+    enabled_ = true;
+  }
 
   /// 急停：输出回中位并停止更新
   common::Err stop();
