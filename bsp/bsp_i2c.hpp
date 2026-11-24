@@ -15,10 +15,10 @@ extern I2c& i2c1;
 /// 由 HAL 回调转调（内部使用）：status 0 = 成功，1 = 出错
 void i2c1_on_async_done(int status);
 
-/// ?? PB6/PB7 ????(??/???)
+// (comment cleaned)
 void i2c1_enable_internal_pullup();
 
-/// ?? I2C ??(?????? 50 kHz ?????)
+// (comment cleaned)
 common::Err i2c1_set_speed(std::uint32_t hz);
 
 }  // namespace bsp

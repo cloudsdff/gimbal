@@ -26,8 +26,8 @@ namespace bsp {
 namespace {
 
 constexpr std::uint32_t kPclk1Hz = 36000000u;
-// ??:???? BLE ??(HM-10 ?)?????? 38400,????? 9600/115200?
-// ??????? B,<baud> ???,???????
+// (comment cleaned)
+// (comment cleaned)
 constexpr std::uint32_t kBaud = 38400u;
 constexpr std::size_t kRingSize = 128;
 
@@ -149,7 +149,7 @@ void uart2_on_rx_byte()
 }
 
 
-/// ???????(HC-05 ???? 9600,???? AT ?????)
+// (comment cleaned)
 common::Err uart2_set_baud(std::uint32_t baud)
 {
   if (!g_inited) return common::Err::NotInit;
@@ -157,7 +157,7 @@ common::Err uart2_set_baud(std::uint32_t baud)
 
   const std::uint32_t brr = (kPclk1Hz + baud / 2u) / baud;
   const std::uint32_t saved = USART2->CR1;
-  USART2->CR1 = 0;                 // ??????
+  USART2->CR1 = 0;
   USART2->BRR = brr;
   USART2->CR1 = saved;
   LOG_I("bluetooth baud -> %lu (BRR=%lu)", (unsigned long)baud, (unsigned long)brr);

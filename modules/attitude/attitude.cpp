@@ -86,7 +86,7 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
   float ay = to_g(raw.ay);
   float az = to_g(raw.az);
 
-  // ??????:? X ?? 180° ? x ??,y/z ??(?????????)
+  // (comment cleaned)
   if (flip_) {
     ay = -ay;
     az = -az;
