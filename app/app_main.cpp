@@ -33,7 +33,7 @@
 namespace {
 
 // ---- 采样与输出 ----
-constexpr std::uint32_t kSampleHz = 200;
+constexpr std::uint32_t kSampleHz = 100;   // 线材差时降频，减轻 I2C 负载
 constexpr std::uint32_t kSamplePeriodMs = 1000 / kSampleHz;   // 5 ms
 constexpr float kDt = 1.0f / static_cast<float>(kSampleHz);
 constexpr int kAngleDiv = 4;      // 每 4 帧 → 50 Hz 角度帧
@@ -48,6 +48,7 @@ module::Gimbal g_gimbal(g_servo_yaw, g_servo_pitch);
 
 /// 蓝牙初始化结果（app_init 在调度器之前执行，日志只能延后到任务里打印）
 common::Err g_bt_init = common::Err::NotInit;
+bool g_quiet = false;   // 静默模式：停止 50 Hz 角度帧，只留 1 Hz 统计（录视频时用）
 module::Mpu6050::Raw g_last_raw{};   // 最近一帧原始数据（调试用）
 
 /// 指令缓冲区（调试串口和蓝牙各一份，互不干扰）
@@ -104,14 +105,15 @@ void handle_command(const char* line)
     }
   } else if (line[0] == 'G' && line[1] == ',') {
     // (comment cleaned)
-    int kp = 0, kd = 0, ki = 0, ff = 0;
-    const int n = std::sscanf(line + 2, "%d,%d,%d,%d", &kp, &kd, &ki, &ff);
+    int kp = 0, kd = 0, ki = 0, ff = 0, ffs = 0;
+    const int n = std::sscanf(line + 2, "%d,%d,%d,%d,%d", &kp, &kd, &ki, &ff, &ffs);
     if (n >= 3) {
       module::Gimbal::Gains g = g_gimbal.gains();
       g.kp = (float)kp / 100.0f;
       g.kd = (float)kd / 100.0f;
       g.ki = (float)ki / 1000.0f;
       if (n >= 4) g.ff_pitch = (float)ff / 100.0f;
+      if (n >= 5) g.ff_scale = (float)ffs / 100.0f;
       g_gimbal.set_gains(g);
       LOG_I("cmd gains: kp=%d kd=%d ki=%d ff=%d", kp, kd, ki, ff);
     }
@@ -134,6 +136,15 @@ void handle_command(const char* line)
     // (comment cleaned)
     g_gimbal.resume();
     LOG_I("cmd resume: gimbal enabled");
+  } else if (line[0] == 'Q') {
+    // Q：切换静默模式（停止 50 Hz 角度帧，只留每秒统计行）
+    g_quiet = !g_quiet;
+    LOG_I("cmd quiet -> %d (1=stopped angle frames)", g_quiet ? 1 : 0);
+  } else if (line[0] == 'O') {
+    // O：打印一帧当前角度（静默模式下按需查看）
+    const module::Euler eu = g_att.euler();
+    LOG_I("angle: yaw=%d pitch=%d roll=%d (0.01deg)", cd(eu.yaw), cd(eu.pitch),
+          cd(eu.roll));
   } else if (line[0] == 'C') {
     g_att.begin_calibration(kCalSamples);
     LOG_I("cmd recalibrate");
@@ -235,7 +246,7 @@ void attitude_task(void* arg)
         (void)g_gimbal.update(g_att.euler(), rates, kDt);
 
         // 3.4 输出角度帧（50 Hz）
-        if ((frames % kAngleDiv) == 0) {
+        if (!g_quiet && (frames % kAngleDiv) == 0) {
           const module::Euler eu = g_att.euler();
           char line[48];
           const int n = std::snprintf(line, sizeof(line), "A,%d,%d,%d\r\n", cd(eu.yaw),

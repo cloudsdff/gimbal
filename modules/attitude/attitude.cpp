@@ -59,6 +59,7 @@ void Attitude::begin_calibration(std::uint16_t samples)
   cal_state_ = CalState::Sampling;
   cal_target_ = (samples == 0) ? 1 : samples;
   cal_count_ = 0;
+  cal_total_frames_ = 0;
   cal_sum_x_ = 0.0f;
   cal_sum_y_ = 0.0f;
   cal_sum_z_ = 0.0f;
@@ -96,6 +97,8 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
 
   // ---------- 上电自校准：静止采样求零偏 ----------
   if (cal_state_ == CalState::Sampling) {
+    ++cal_total_frames_;
+
     // 静止校验：角速度太大说明板子在被碰，这一帧的加速度角不可信
     const float rate_mag = std::sqrt(gx * gx + gy * gy + gz * gz);
     if (rate_mag > kCalMaxRateDps) {
@@ -113,7 +116,13 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
     cal_sum_roll_ += std::atan2(ay, az) * kRadToDeg;
     cal_sum_pitch_ += std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg;
     ++cal_count_;
-    if (cal_count_ >= cal_target_) {
+
+    // 超时强制完成：如果因为持续振动一直凑不满目标帧数，
+    // 累计到 1500 帧（7.5 秒）且已有 20 帧以上，就用现有数据完成校准。
+    // 不加这个保护的话，稍微有点振动就会"永远在校准中"，角度完全不更新（踩过）。
+    const bool timeout_ok = (cal_total_frames_ >= 1500 && cal_count_ >= 20);
+
+    if (cal_count_ >= cal_target_ || timeout_ok) {
       const float inv = 1.0f / static_cast<float>(cal_count_);
       bias_.x = cal_sum_x_ * inv;
       bias_.y = cal_sum_y_ * inv;

@@ -11,6 +11,8 @@
  */
 #include "mpu6050.hpp"
 
+#include <cmath>
+
 #include <cstring>
 
 #include "log.hpp"
@@ -93,6 +95,13 @@ common::Err Mpu6050::init()
   return common::Err::Ok;
 }
 
+
+namespace {
+// 原始数据的合理性范围：重力模长应该在 0.5–2 g 之间
+constexpr float kAccelPlausibleMin = 0.5f;
+constexpr float kAccelPlausibleMax = 2.0f;
+}  // namespace
+
 common::Err Mpu6050::read_raw(Raw& out)
 {
   if (!inited_) return common::Err::NotInit;
@@ -108,7 +117,18 @@ common::Err Mpu6050::read_raw(Raw& out)
   out.gx = be16(&buf[8]);
   out.gy = be16(&buf[10]);
   out.gz = be16(&buf[12]);
-  return common::Err::Ok;
+    // 有效性校验：I2C 偶尔会"成功"但返回全 0 或全 -1（传感器锁死的表现）。
+  // 不校验的话这些垃圾数据会被当成真的积分进 yaw，导致角度永久偏移（踩过）。
+  {
+    const float ax = static_cast<float>(out.ax) / 16384.0f;
+    const float ay = static_cast<float>(out.ay) / 16384.0f;
+    const float az = static_cast<float>(out.az) / 16384.0f;
+    const float mag = std::sqrt(ax * ax + ay * ay + az * az);
+    if (mag < kAccelPlausibleMin || mag > kAccelPlausibleMax) {
+      return common::Err::BusError;
+    }
+  }
+return common::Err::Ok;
 }
 
 common::Err Mpu6050::read_raw_async(Raw& out)

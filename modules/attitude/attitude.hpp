@@ -123,7 +123,7 @@ class Attitude {
   // 默认开启：这块模块是倒装在上层平台上的（roll 读数接近 180°），
   // 之前用 F 指令临时打开，一重启就失效、控制方向反过来。
   // 装正之后把它改回 false 即可。
-  bool flip_ = true;            ///< 模块翻面安装补偿（绕 X 轴 180°）
+  bool flip_ = false;            ///< 模块翻面安装补偿（绕 X 轴 180°）
   Euler euler_{};
   GyroBias bias_{};
   GyroBias rate_{};   ///< 最近一帧修正后的角速度（dps）
@@ -138,11 +138,12 @@ class Attitude {
   float offset_pitch_ = 0.0f;
 
   /// 校准期间允许的最大角速度（dps）：超过说明板子在被碰，本帧作废
-  static constexpr float kCalMaxRateDps = 20.0f;
+  static constexpr float kCalMaxRateDps = 60.0f;   // 放宽：20 太严，舵机保持时的微振动都能超
 
   CalState cal_state_ = CalState::Idle;
   std::uint16_t cal_target_ = 0;
   std::uint16_t cal_count_ = 0;
+  std::uint16_t cal_total_frames_ = 0;   // 校准期间累计帧数（超时强制完成用）
   std::uint16_t cal_rejected_ = 0;   ///< 被拒的采样次数（板子动了）
   float cal_sum_x_ = 0.0f;
   float cal_sum_y_ = 0.0f;
