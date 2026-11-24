@@ -78,13 +78,21 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
   if (dt_s <= 0.0f) dt_s = 0.005f;    // 兜底：默认 200 Hz
   if (dt_s > 0.2f) dt_s = 0.2f;       // 兜底：防止一次卡顿把积分打飞
 
-  const float gx = to_dps(raw.gx);
-  const float gy = to_dps(raw.gy);
-  const float gz = to_dps(raw.gz);
+  float gx = to_dps(raw.gx);
+  float gy = to_dps(raw.gy);
+  float gz = to_dps(raw.gz);
 
-  const float ax = to_g(raw.ax);
-  const float ay = to_g(raw.ay);
-  const float az = to_g(raw.az);
+  float ax = to_g(raw.ax);
+  float ay = to_g(raw.ay);
+  float az = to_g(raw.az);
+
+  // ??????:? X ?? 180� ? x ??,y/z ??(?????????)
+  if (flip_) {
+    ay = -ay;
+    az = -az;
+    gy = -gy;
+    gz = -gz;
+  }
 
   // ---------- 上电自校准：静止采样求零偏 ----------
   if (cal_state_ == CalState::Sampling) {

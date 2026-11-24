@@ -90,32 +90,83 @@ class I2c1 final : public I2c {
 
   common::Err probe(std::uint8_t dev, std::uint32_t timeout_ms) override
   {
-    const auto st = HAL_I2C_IsDeviceReady(kBus, dev << kAddrShift, 3, timeout_ms);
+    HAL_StatusTypeDef st = HAL_I2C_IsDeviceReady(kBus, dev << kAddrShift, 3, timeout_ms);
+
+    // ?????? BUSY(?????):????????
+    if (st == HAL_BUSY) {
+      I2C1->CR1 |= I2C_CR1_SWRST;
+      for (volatile int d = 0; d < 100; ++d) {}
+      I2C1->CR1 &= ~I2C_CR1_SWRST;
+      for (volatile int d = 0; d < 100; ++d) {}
+      (void)HAL_I2C_Init(kBus);
+      st = HAL_I2C_IsDeviceReady(kBus, dev << kAddrShift, 3, timeout_ms);
+    }
+
     if (st == HAL_OK) return common::Err::Ok;
     if (st == HAL_BUSY) return common::Err::Busy;
     return common::Err::NoAck;
   }
 
+  /**
+   * @brief 总线恢复：把卡死的 I2C 从"永远 BUSY"里救出来
+   *
+   * 为什么原来的实现不够：
+   *   F103 的 I2C 外设只有在总线上检测到 **STOP 条件** 时才会清 BUSY 位。
+   *   只打 9 个 SCL 时钟能让从机吐完字节，但**不产生 STOP**，
+   *   于是外设永远认为自己还在传输中 —— 之后每次调用都返回 HAL_BUSY。
+   *   实测：把 SCL/SDA 从模块上完全拔掉，BUSY 依然是 1，就是证据。
+   *
+   * 正确的四步：
+   *   1) 把两根线切成普通 GPIO 开漏，先都释放为高
+   *   2) 打 9 个 SCL 时钟，让可能卡住的从机把字节吐完
+   *   3) **手动生成 STOP 条件**（SCL 高 → SDA 由低变高）
+   *   4) 外设软复位（CR1.SWRST）+ 重新 Init
+   */
   common::Err recover_bus() override
   {
     LOG_W("i2c: bus recovery start");
     HAL_I2C_DeInit(kBus);
 
+    // 1) 两根线都切成开漏输出，先释放为高电平（开漏 + 外部上拉 = 高）
     GPIO_InitTypeDef gpio = {0};
-    gpio.Pin = GPIO_PIN_6;
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    gpio.Mode = GPIO_MODE_OUTPUT_OD;
     gpio.Pull = GPIO_NOPULL;
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(GPIOB, &gpio);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6 | GPIO_PIN_7, GPIO_PIN_SET);
+    for (volatile int d = 0; d < 500; ++d) {}
 
+    // 2) 9 个 SCL 时钟：让卡在"等时钟"状态的从机把剩余字节吐完
     for (int i = 0; i < 9; ++i) {
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
-      for (volatile int d = 0; d < 200; ++d) {}
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
-      for (volatile int d = 0; d < 200; ++d) {}
+      for (volatile int d = 0; d < 300; ++d) {}
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+      for (volatile int d = 0; d < 300; ++d) {}
     }
 
+    // 3) 手动生成 STOP：SCL 保持高，SDA 由低变高
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    for (volatile int d = 0; d < 300; ++d) {}
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+    for (volatile int d = 0; d < 300; ++d) {}
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+    for (volatile int d = 0; d < 300; ++d) {}
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);   // ← 这一下产生 STOP
+    for (volatile int d = 0; d < 500; ++d) {}
+
+    // 4) 外设软复位：清掉可能残留的 BUSY/状态机
+    I2C1->CR1 |= I2C_CR1_SWRST;
+    for (volatile int d = 0; d < 100; ++d) {}
+    I2C1->CR1 &= ~I2C_CR1_SWRST;
+    for (volatile int d = 0; d < 100; ++d) {}
+
     const auto st = HAL_I2C_Init(kBus);
+
+    // 5) 引脚交回 I2C 外设（复用开漏）
+    gpio.Mode = GPIO_MODE_AF_OD;
+    HAL_GPIO_Init(GPIOB, &gpio);
+
     LOG_W("i2c: recover done, re-init %s", (st == HAL_OK) ? "Ok" : "FAILED");
     return (st == HAL_OK) ? common::Err::Ok : common::Err::BusError;
   }
@@ -130,6 +181,25 @@ I2c1 g_i2c1;
 I2c& i2c1 = g_i2c1;
 
 void i2c1_on_async_done(int status) { g_i2c1.set_async_status(status); }
+
+/**
+ * @brief ?? PB6/PB7 ?????(? 40 k?)
+ *
+ * ???????:
+ *   I2C ?????,?????????????????? 4.7 k?,
+ *   ???????????????,????? -- ??????? BUSY?
+ *   ?????? 40 k?,??/??????,??????????,
+ *   ????????"???"?"???"?
+ */
+void i2c1_enable_internal_pullup()
+{
+  GPIO_InitTypeDef gpio = {0};
+  gpio.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+  gpio.Mode = GPIO_MODE_AF_OD;
+  gpio.Pull = GPIO_PULLUP;
+  gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &gpio);
+}
 
 }  // namespace bsp
 
