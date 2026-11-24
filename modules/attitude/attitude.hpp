@@ -89,6 +89,13 @@ class Attitude {
 
   /// 在线调整滤波加权系数（上位机下发指令用）
   void set_alpha(float a);
+
+  /// 切换"仅用加速度计"模式。
+  /// 互补滤波依赖准确的陀螺零偏；这块模块的零偏随温度/振动漂移，
+  /// 校准后仍会缓慢发散（实测 4 秒漂 20°）。加速度计角度没有积分过程，
+  /// 不会漂移，噪声用一阶低通压掉即可 —— 2 Hz 以内的云台自稳完全够用。
+  void set_accel_only(bool on) { accel_only_ = on; }
+  bool accel_only() const { return accel_only_; }
   float alpha() const { return alpha_; }
 
   /**
@@ -123,6 +130,7 @@ class Attitude {
   // 默认开启：这块模块是倒装在上层平台上的（roll 读数接近 180°），
   // 之前用 F 指令临时打开，一重启就失效、控制方向反过来。
   // 装正之后把它改回 false 即可。
+  bool accel_only_ = false;   ///< true = 只用加速度计角度（不积分陀螺）
   bool flip_ = false;            ///< 模块翻面安装补偿（绕 X 轴 180°）
   Euler euler_{};
   GyroBias bias_{};

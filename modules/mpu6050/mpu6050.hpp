@@ -43,6 +43,12 @@ class Mpu6050 {
   /// 探测 + 唤醒 + 设量程。失败返回具体 Err，不静默
   common::Err init();
 
+  /// 强制重新初始化（先清掉内部状态再跑 init）。
+  /// 传感器被干扰卡住后，寄存器可能还能 ACK 但读出来是垃圾，
+  /// 重新写一遍 PWR_MGMT_1 / 量程寄存器就能救回来；
+  /// 注意不能直接调 init() —— 它在已初始化时会返回 Busy，什么都不做（踩过）。
+  common::Err reinit();
+
   /// 阻塞方式读一帧
   common::Err read_raw(Raw& out);
 

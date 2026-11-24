@@ -102,6 +102,13 @@ constexpr float kAccelPlausibleMin = 0.5f;
 constexpr float kAccelPlausibleMax = 2.0f;
 }  // namespace
 
+common::Err Mpu6050::reinit()
+{
+  inited_ = false;          // 关键：让 init() 真正执行，而不是直接返回 Busy
+  addr_ = kAddrDefault;     // 重新从默认地址开始探测
+  return init();
+}
+
 common::Err Mpu6050::read_raw(Raw& out)
 {
   if (!inited_) return common::Err::NotInit;

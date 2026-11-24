@@ -138,6 +138,33 @@ void handle_command(const char* line)
     // (comment cleaned)
     g_gimbal.resume();
     LOG_I("cmd resume: gimbal enabled");
+  } else if (line[0] == 'A') {
+    // A：切换"仅用加速度计"模式（A 再按一次切回互补滤波）
+    g_att.set_accel_only(!g_att.accel_only());
+    LOG_I("cmd accel_only -> %d (1=no gyro integration)", g_att.accel_only() ? 1 : 0);
+  } else if (line[0] == 'M') {
+    // M：重新初始化 MPU6050（等价于"软复位传感器"）。
+    // 用途：舵机干扰后芯片可能掉回 sleep 或配置被冲掉，
+    // 此时地址还能 ACK 但读寄存器全是垃圾 —— 重新写一遍配置就能救回来。
+    LOG_I("mpu re-init by command...");
+    (void)bsp::soft_i2c.recover_bus();
+    const common::Err re = g_mpu.reinit();
+    LOG_I("mpu re-init -> %s", common::to_str(re));
+  } else if (line[0] == 'I') {
+    // I：扫描 I2C 总线，打印所有应答的地址（排查"模块到底在不在总线上"）
+    LOG_I("i2c scan start (0x08-0x77)...");
+    int found = 0;
+    for (std::uint8_t a = 0x08; a <= 0x77; ++a) {
+      if (bsp::soft_i2c.probe(a, 5) == common::Err::Ok) {
+        LOG_I("  i2c device found at 0x%02X", a);
+        ++found;
+      }
+    }
+    if (found == 0) {
+      LOG_E("i2c scan: no device on bus (check VCC/GND/SCL/SDA)");
+    } else {
+      LOG_I("i2c scan done, %d device(s)", found);
+    }
   } else if (line[0] == 'Q') {
     // Q：切换静默模式（停止 50 Hz 角度帧，只留每秒统计行）
     g_quiet = !g_quiet;
@@ -182,7 +209,7 @@ void attitude_task(void* arg)
   // 软件 I2C 的引脚必须先配好（PB6/PB7 开漏输出），否则 bit-bang 驱动不了总线
   bsp::SoftI2c::init_pins();
   LOG_I("soft i2c pins ready (PB6=SCL PB7=SDA, bit-bang)");
-  common::Err e = g_mpu.init();
+  common::Err e = g_mpu.reinit();
   int retry = 0;
   while (e != common::Err::Ok) {
     // (comment cleaned)
@@ -191,7 +218,7 @@ void attitude_task(void* arg)
     LOG_E("mpu init -> %s, retry in 2s (check VCC/GND/SCL=B6/SDA=B7)", common::to_str(e));
     osDelay(2000);
     (void)bsp::soft_i2c.recover_bus();
-    e = g_mpu.init();
+    e = g_mpu.reinit();
   }
   LOG_I("mpu init -> Ok");
 
@@ -295,11 +322,22 @@ void attitude_task(void* arg)
         LOG_W("i2c read failed, recovering (bus reset every frame)");
       }
 
+      // 传感器卡死后光靠总线恢复救不回来：地址还能 ACK，但寄存器读出来是垃圾。
+      // 这时必须重新写一遍 PWR_MGMT_1 / 量程寄存器（= reinit），实测能直接救回，
+      // 不用断电重启。放在 30 次（约 0.3 秒）时触发，早于下面的安全停机。
+      if (consecutive_fail == 20 || consecutive_fail == 120) {
+        const common::Err re = g_mpu.reinit();
+        LOG_W("mpu reinit after 30 fails -> %s", common::to_str(re));
+        if (re == common::Err::Ok) {
+          consecutive_fail = 0;
+        }
+      }
+
       // 安全策略：传感器连续失效约 0.5 秒（100 帧）就自动停机。
       // 不这么做会形成正反馈：角度算错 → 舵机全力纠正 → 大电流 → 干扰更大 → 更错
-      if (consecutive_fail >= 100 && g_gimbal.enabled()) {
+      if (consecutive_fail >= 300 && g_gimbal.enabled()) {
         (void)g_gimbal.stop();
-        LOG_E("safety stop: imu failed 100x, gimbal disabled (send X to resume)");
+        LOG_E("safety stop: imu failed 300x (3s), gimbal disabled (send X to resume)");
       }
     }
 

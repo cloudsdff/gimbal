@@ -150,6 +150,21 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
   const float pitch_acc =
       std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg - offset_pitch_;
 
+  // 仅用加速度计模式：不做陀螺积分，只对加速度角做一阶低通。
+  // 好处是永远不漂移、不需要陀螺零偏；代价是动态响应稍慢、对线加速度敏感。
+  if (accel_only_) {
+    const float k = 0.25f;   // 低通系数：越小越平滑、越滞后（100 Hz 下约 40 ms 时间常数）
+    euler_.pitch += k * (pitch_acc - euler_.pitch);
+    euler_.roll += k * (roll_acc - euler_.roll);
+    // 加速计无法测 yaw，保持为 0（无磁力计时 yaw 本来就没有绝对基准）
+    euler_.yaw = 0.0f;
+    rate_.x = rate_.y = rate_.z = 0.0f;
+    angle_rate_.x = angle_rate_.y = angle_rate_.z = 0.0f;
+    has_prev_ = false;   // 切回互补滤波时不要用旧差分
+    return common::Err::Ok;
+  }
+
+
   // ---------- 互补滤波 ----------
   euler_.roll = alpha_ * (euler_.roll + gx_d * dt_s) + (1.0f - alpha_) * roll_acc;
   euler_.pitch = alpha_ * (euler_.pitch + gy_d * dt_s) + (1.0f - alpha_) * pitch_acc;
