@@ -147,6 +147,15 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
   euler_.pitch = alpha_ * (euler_.pitch + gy_d * dt_s) + (1.0f - alpha_) * pitch_acc;
   euler_.yaw += gz_d * dt_s;   // 无磁力计，只能积分（会缓慢漂移）
 
+  // 欧拉角微分：给控制器做阻尼用，符号必然和角度一致
+  if (has_prev_ && dt_s > 0.0f) {
+    angle_rate_.z = (euler_.yaw - prev_euler_.yaw) / dt_s;   // z 存 yaw 微分
+    angle_rate_.y = (euler_.pitch - prev_euler_.pitch) / dt_s; // y 存 pitch 微分
+    angle_rate_.x = (euler_.roll - prev_euler_.roll) / dt_s;  // x 存 roll 微分
+  }
+  prev_euler_ = euler_;
+  has_prev_ = true;
+
   return common::Err::Ok;
 }
 
