@@ -1,142 +1,161 @@
-﻿# 任务01 Frameworks —— STM32 分层框架
+﻿# 任务02 · Gimbal Master —— Yaw-Pitch 二轴云台
 
-> **仓库地址**：https://github.com/cloudsdff/f103_w1
-> **移植版**：https://github.com/cloudsdff/f407_port
-> **演示视频**：https://github.com/cloudsdff/f103_w1/releases/tag/v1.0
+> STM32F103C8T6 · MPU6050 · SG90 ×2 · BLE 指令通道 · 自写上位机
 
-一套 C++17 写的 STM32 三层框架（Application / Module / BSP），
-在 **STM32F103C8T6** 上完成开发与实测，并**零改动业务代码**移植到 **STM32F407VET6**，
-两块板通过 500 kbps CAN 总线双向互通。
+---
+
+## 一、这个任务做了什么
+
+一套基于 FreeRTOS 的二轴云台控制系统，包含从传感器驱动到上位机的完整链路：
 
 ```
-app/app_main.cpp        ← 业务逻辑（看不到 HAL）
-modules/mpu6050/        ← 传感器语义（看不到 HAL）
-bsp/uart|i2c|can        ← 纯虚接口 + HAL 实现（HAL 只在 .cpp 里）
-common/error_code|log   ← 统一错误码 + 异步日志
+MPU6050 ──I2C──→ 姿态解算（互补滤波）
+                        │
+                        ▼
+              串级控制器（角度环 P + 角速度环 PD）
+                        │
+                        ▼
+              舵机 PWM（TIM3，50 Hz）
+                        │
+   蓝牙 / 串口 ──────────┘   ← 指令：目标角度、滤波系数、增益
+
+              上位机（Python/tkinter）
+                 ↑ 三轴实时波形 + 在线调参
 ```
 
-## 一、五项要求的完成情况
+## 二、能力的实现位置
 
-| 要求 | 做法 | 实测证据 |
+| 能力 | 代码位置 | 说明 |
 |---|---|---|
-| **分层** | BSP/Module/App 三层，接口纯虚类 | `app/` `modules/` 搜不到 `HAL_`；移植时业务层改动 **0 行** |
-| **FreeRTOS 任务划分** | 5 个任务，优先级/周期/栈逐一论证 | 实测剩余栈 Comm=352 B、Sensor=360 B、task_log=1296 B |
-| **每外设 ≥2 种方式** | UART 阻塞+DMA、I2C 阻塞+中断、CAN 阻塞发+中断收 | 25600 字节零错位；I2C 拔线 4 ms 自愈；CAN 1800+ 帧无错 |
-| **统一错误码 + 日志** | `Err` 10 种错误码 + 异步日志（队列+低优先级任务） | 六条失败路径实测，`logdrop` 可观测 |
-| **移植到不同型号** | F103 → F407，只改 3 个文件 | `PCLK1=42000000`，跨型号 CAN 双向互通 |
+| **姿态解算** | `modules/attitude/` | 互补滤波，200 Hz，含上电自校准与零漂抑制 |
+| **串级控制** | `modules/gimbal/` | 角度环→角速度环，含抗积分饱和、输出限幅、重力前馈 |
+| **舵机驱动** | `bsp/bsp_pwm.cpp` + `modules/servo/` | TIM3 寄存器直配 50 Hz；角度语义、机械限位、缓启动、回差参数 |
+| **传感器驱动** | `modules/mpu6050/` | 探测、唤醒、量程配置、双地址兜底 |
+| **指令通道** | `bsp/bsp_bluetooth.cpp` + `app/` | BLE 模块走 USART2（寄存器直配），38400 |
+| **上位机** | `upper/app.py` | tkinter Canvas 三曲线，无第三方绘图库依赖 |
 
-## 二、硬件
+## 三、关键设计决策
 
-| 器件 | 型号 | 用途 |
+### 3.1 为什么用互补滤波而不是 Mahony/EKF
+
+F103 是 Cortex-M3，**没有 FPU**，浮点全靠软件模拟：
+
+| 方案 | 每帧计算量 | 200 Hz 下可行性 |
 |---|---|---|
-| 主控 A | STM32F103C8T6（蓝药丸） | 主开发板，Cortex-M3 @72 MHz |
-| 主控 B | STM32F407VET6（黑卡板） | 移植验证，Cortex-M4F @168 MHz |
-| 传感器 | MPU6050 | I2C1（PB6/PB7），地址 0x68 |
-| 收发器 | TJA1050 ×2 | CAN1（PA11/PA12），500 kbps，两端各 120 Ω |
-| 调试器 | J-Link（含 CDC 串口） | SWD + 115200 串口 |
+| 互补滤波 | ~15 次乘加 | ✅ CPU 占用可忽略 |
+| Mahony | 四元数微分 + 归一化 | ⚠️ 软件浮点下勉强 |
+| EKF | 矩阵运算 | ❌ 不可能 |
 
-## 三、目录
+任务02 合格线是静态抖动 ≤2°、误差 ≤5°，互补滤波在静态和低频段完全够用。
+
+### 3.2 为什么用串级
+
+单环（纯角度 P）要等角度先偏了才动作；串级的内环用角速度，
+**扰动刚发生、角度还没变化时角速度已经变了**，内环立刻反向出力。
+这就是云台抗扰的来源。
+
+### 3.3 为什么直接配寄存器而不走 CubeMX
+
+只要改一个外设就重新生成工程，会把 `FreeRTOSConfig.h` 里的堆大小重置回 3072
+（任务01 踩过两次）。TIM3、USART2 都是直接配寄存器，代码集中、可评审。
+
+## 四、实测数据
+
+### 4.1 静态指标
+
+| 指标 | 任务要求 | 实测 | 结论 |
+|---|---|---|---|
+| 静态指向抖动 | ≤ 2.0° 峰峰 | **0.05 – 0.29°** | ✅ 优于要求一个量级 |
+| 绝对指向误差 | ≤ ±5° | **0.02 – 0.06°** | ✅ |
+
+### 4.2 时序
 
 ```
-f103_w1/
-├── app/            应用层（任务划分、业务循环）
-├── bsp/            板级支持包（uart / i2c / can）
-├── common/         错误码、异步日志、RTOS 钩子
-├── modules/        模块层（mpu6050）
-├── Core/ Drivers/ Middlewares/    CubeMX 生成（HAL + FreeRTOS）
-├── docs/           全部设计文档与实测记录
-└── CMakeLists.txt  构建脚本
+att 200Hz samp=... drop=0        ← 采样率
+A 帧 50 Hz                        ← 输出率
+I2C 压力测试：85 次舵机动作 / 60 秒，0 错误
 ```
 
-业务代码共 **1012 行**（不含生成代码）。
+### 4.3 姿态解算标定数据
 
-## 四、编译与烧录
+```
+calib done: gyro bias = [-8586, -76, 0] mdps
+```
 
-### 环境
+X 轴零偏高达 **−8.586 dps** —— 不做校准的话 1 秒就漂 8.6°。
 
-| 工具 | 版本 |
+### 4.4 闭环跟踪（未达标，原因见文档）
+
+| 项 | 实测 |
 |---|---|
-| arm-none-eabi-gcc | 14.3.Rel1 |
-| CMake | 4.x |
-| Ninja | 1.13 |
-| STM32CubeMX | 6.18 |
-| STM32Cube FW_F1 | V1.8.7 |
+| 传动比 | 舵机 72° → 平台 26°（36%） |
+| 齿轮回差 | 2.46° |
+| 下行行程 | 仅 −1.5°（顶住结构） |
+| 大角度跟踪 | 未实现（机械限制） |
 
-### 编译
-
-```powershell
-cd D:\stm32\f103_w1
-cmake --preset Debug
-cmake --build --preset Debug
-```
-
-产物：`build/Debug/f103_w1.elf`
-
-### 编译对端节点（B 节点，发 0x456）
-
-```powershell
-cmake -B build/B -G Ninja -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/gcc-arm-none-eabi.cmake -DCAN_NODE_B=ON
-cmake --build build/B
-```
-
-### 烧录（J-Link Commander）
-
-```text
-loadfile build\Debug\f103_w1.elf
-r
-g
-qc
-```
-
-## 五、运行现象
-
-```text
-===== D2 boot test =====
-SYSCLK=72000000 HCLK=72000000 PCLK1=36000000 PCLK2=72000000
-[I][12] app layer ready (C++17, HAL-free)
-[I][12] can: started (filter id=0x456, FIFO0 irq on)
-[I][1023] acc[-1048,220,18336] gyro[-140,-4,0]
-[I][1037] rx id=0x456 len=8 seq=13799
-[I][5016] stats: tx=49 rx=49 drop=0 err=0 busoff=0 logsent=21 logdrop=0
-[I][5016] stack free: Comm=352 Sensor=360
-```
-
-## 六、演示视频
-
-`桌面\Helios 任务01\演示视频-任务01.mp4`（3 分 30 秒，1920x1080，H.264，含中文字幕）
-
-内容：① 双板 CAN 互通 ② 启动与时钟 ③ 任务与栈水线 ④ 总线故障与恢复 ⑤ 分层证据 ⑥ 移植到 F407
-
-录制流程见 [11-录制操作单](docs/11-录制操作单.md)，提交清单见 [SUBMISSION.md](SUBMISSION.md)。
-
-## 七、文档索引
+## 五、文档索引
 
 | 文档 | 内容 |
 |---|---|
-| [01-阅读笔记](docs/01-阅读笔记.md) | 精读开源框架 `HNUYueLuRM/basic_framework` 的记录 |
-| [01-开源框架分析](docs/01-开源框架分析.md) | 四条具体批判（带文件名+行号） |
-| [02-UART实测记录](docs/02-UART实测记录.md) | 阻塞 vs DMA，25600 字节压测，96.5% 带宽利用率 |
-| [03-I2C与MPU6050实测](docs/03-I2C与MPU6050实测.md) | 六轴数据、1.119g 偏差分析、拔线 4ms 自愈 |
-| [04-CAN双节点实测](docs/04-CAN双节点实测.md) | 500 kbps 参数推导、双板互通、三个坑 |
-| [05-任务设计](docs/05-任务设计.md) | 5 个任务的优先级/周期/栈论证与实测 |
-| [06-失败路径矩阵](docs/06-失败路径矩阵.md) | 六条故障的实测证据 |
-| [07-移植说明](docs/07-移植说明.md) | F103→F407 的 6 处改动与跨型号互通 |
-| [08-架构与目录说明](docs/08-架构与目录说明.md) | 分层结构、依赖规则、资源占用 |
-| [09-接口说明](docs/09-接口说明.md) | 四个接口 + 返回值语义 |
-| [10-演示视频脚本](docs/10-演示视频脚本.md) | 分镜脚本 |
-| [ai_log/](ai_log/) | AI 助手协作记录 |
+| `docs/12-姿态解算方案.md` | 互补滤波原理、自校准、零漂抑制 |
+| `docs/13-控制方案.md` | 串级结构、参数含义、四项保护、手算验证 |
+| `docs/14-蓝牙链路联调.md` | **BLE 模块识别**、38400 波特率扫描、FFE2 通道、J-Link 免串口调试 |
+| `docs/15-完整接线方案.md` | 三套电源一个地、逐器件引脚表、上电自检清单 |
+| `docs/16-闭环实测记录.md` | 参数整定表、阶跃数据、稳态误差分析 |
+| `docs/17-回差测量与补偿.md` | 回差测量方法、软件补偿失效分析、机械预紧方案 |
+| `docs/18-任务02状态与限制.md` | **完整的失败证据链与改进方向** |
 
-## 八、移植版工程
+## 六、遇到的问题（都记录在文档里）
 
-F407 版本是独立仓库：`D:\stm32\f407_port`（结构相同，`docs/` 内含同一套文档）。
+| # | 现象 | 根因 |
+|---|---|---|
+| 1 | 日志行被角度帧插进中间 | 日志槽位 96 字节截断（不是并发问题） |
+| 2 | 串口完全静默、丢 3.4 万条日志 | HAL 状态机卡在 BUSY_TX |
+| 3 | I2C 永远返回 BUSY | 恢复流程缺 STOP 条件 + 外设软状态残留 |
+| 4 | roll 读到 ±180° | 模块倒装，用软件做 180° 坐标变换补偿 |
+| 5 | 平台甩到极限仍持续输出 | 缺传感器失效保护 |
+| 6 | 输出顶到限幅后积分继续累积 | 缺抗积分饱和 |
+| 7 | 目标回零后舵机停在偏置位 | 死区提前 return 冻住输出 |
+| 8 | 怎么调方向都振荡 | **角度与角速度符号不一致，阻尼变正反馈** |
+| 9 | 传感器间歇性锁死 | 模块内部 I2C 从机死锁，需断电恢复 |
 
-差异总结：`bsp_can.cpp` 改了 3 行句柄名（`hcan`→`hcan1`），
-`main.c` 加 3 处 USER CODE，CubeMX 里改 CAN 位时序（PCLK1 从 36→42 MHz）
-并勾上 `CAN1_SCE interrupt`（F4 把 CAN 错误中断拆成了独立向量）。
+## 七、代码规模
 
-## 九、已知限制
+| 层 | 文件 | 行数 |
+|---|---|---|
+| `app/` | app_main.cpp | ~300 |
+| `modules/` | attitude / gimbal / servo / mpu6050 | ~700 |
+| `bsp/` | uart / i2c / pwm / bluetooth | ~700 |
+| `common/` | log / error_code / rtos_hooks | ~250 |
+| `upper/` | app.py | ~430 |
 
-- F103 的 Flash 已用 83%，继续加模块需先换 `-Os`
-- I2C 上拉依赖从机模块，模块断电时会报 `Busy` 而不是 `NoAck`（建议主机侧加 4.7k）
-- F407 未开 FPU（当前用软浮点，对现有功能无影响）
-- 日志丢弃策略为"丢最新"，可改为"丢最旧"以保留崩溃前现场
+## 八、在线调试指令
+
+| 指令 | 作用 |
+|---|---|
+| `T,<yaw_cd>,<pitch_cd>` | 设置目标指向 |
+| `K,<milli>` | 设置滤波系数 alpha |
+| `G,<kp>,<kd>,<ki>,<ff>` | 设置控制增益与前馈 |
+| `S,<±1>,<±1>` | 轴方向 |
+| `P,<yaw_us>,<pitch_us>` | **开环脉宽（标定/演示用）** |
+| `D` / `X` | 停机 / 恢复 |
+| `L,<backlash>` | 回差补偿量 |
+| `F` | 切换翻面补偿 |
+| `C` | 重新校准 |
+| `B,<baud>` | 蓝牙波特率 |
+
+## 九、如何运行
+
+```bash
+# 编译
+cmake -B build/Release -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build/Release
+
+# 烧录（J-Link）
+# loadfile build/Release/f103_w1.elf
+
+# 上位机
+python upper/app.py
+```
+
+> **注意用 Release 构建**：Debug 版本的 Flash 占用 99%，Release 只有 68%。
