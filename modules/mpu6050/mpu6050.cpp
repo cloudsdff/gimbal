@@ -45,6 +45,19 @@ common::Err Mpu6050::init()
 
   // 1) 先探测地址上有没有人应答
   common::Err e = bus_.probe(addr_, kTimeoutMs);
+
+  // 地址兜底：AD0 引脚悬空时，有的模块实际挂在 0x69 而不是 0x68。
+  // 自动试一遍两个地址，省得为了一个引脚去拆线。
+  if (e != common::Err::Ok) {
+    const std::uint8_t alt = (addr_ == 0x68) ? 0x69 : 0x68;
+    LOG_W("mpu6050: addr 0x%02X no ack, try 0x%02X", addr_, alt);
+    if (bus_.probe(alt, kTimeoutMs) == common::Err::Ok) {
+      addr_ = alt;
+      e = common::Err::Ok;
+      LOG_I("mpu6050: found at 0x%02X", addr_);
+    }
+  }
+
   if (e != common::Err::Ok) {
     LOG_E("mpu6050: probe failed (%s)", common::to_str(e));
     return e;

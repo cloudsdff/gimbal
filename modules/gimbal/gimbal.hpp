@@ -45,6 +45,10 @@ class Gimbal {
     float rate_ref_max = 200.0f;   ///< 角速度参考限幅（°/s）
     float out_max_deg = 35.0f;     ///< 输出到舵机的最大角度偏置
     float deadband_deg = 0.5f;     ///< 角度死区，抑制抖动
+    /// 重力前馈：平台自重造成的恒定偏置，直接加到 pitch 输出上。
+    /// 实测：往下走误差 0.43°，往上走误差 4.84° —— 不对称来自重力，
+    /// 用前馈把这个偏置补掉，积分就不用慢慢积（也不会积到饱和）。
+    float ff_pitch = 0.0f;
   };
 
   Gimbal(Servo& yaw, Servo& pitch) : yaw_(yaw), pitch_(pitch) {}
@@ -86,7 +90,8 @@ class Gimbal {
     float out = 0.0f;
   };
 
-  common::Err step_axis(AxisState& st, float target, float angle, float rate, float dt);
+  common::Err step_axis(AxisState& st, float target, float angle, float rate, float dt,
+                        float ff);
 
   Servo& yaw_;
   Servo& pitch_;
