@@ -39,8 +39,8 @@ struct Rates {
 class Gimbal {
  public:
   struct Gains {
-    float kp = 2.0f;      ///< 角度环 P
-    float kd = 0.6f;      ///< 角速度环 D（阻尼）
+    float kp = 6.0f;      ///< 角度环 P
+    float kd = 1.0f;      ///< 角速度环 D（阻尼）
     float ki = 0.05f;     ///< 角速度环 I
     float rate_ref_max = 200.0f;   ///< 角速度参考限幅（°/s）
     float out_max_deg = 35.0f;     ///< 输出到舵机的最大角度偏置
