@@ -126,6 +126,11 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
     return common::Err::Busy;   // 校准期间不给角度
   }
 
+  // 存下修正后的角速度供控制器使用（注意 flip 已经在上面处理过了）
+  rate_.x = gx - bias_.x;
+  rate_.y = gy - bias_.y;
+  rate_.z = gz - bias_.z;
+
   // ---------- 去零偏 + 死区 ----------
   const float gx_d = deadband(gx - bias_.x, deadband_dps_);
   const float gy_d = deadband(gy - bias_.y, deadband_dps_);

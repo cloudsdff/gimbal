@@ -72,6 +72,11 @@ class Attitude {
   /// 当前姿态（度）
   const Euler& euler() const { return euler_; }
 
+  /// 修正后的角速度（已扣零偏、已按安装方向取反），单位 dps。
+  /// 控制器必须用这个值，不能自己拿 raw 算 —— 否则和角度符号不一致，
+  /// 阻尼项会变成正反馈（踩过：表现为"怎么调方向都振荡"）。
+  const GyroBias& corrected_rates() const { return rate_; }
+
   /// 当前零偏（dps）
   const GyroBias& bias() const { return bias_; }
 
@@ -114,6 +119,7 @@ class Attitude {
   bool flip_ = true;            ///< 模块翻面安装补偿（绕 X 轴 180°）
   Euler euler_{};
   GyroBias bias_{};
+  GyroBias rate_{};   ///< 最近一帧修正后的角速度（dps）
   float deadband_dps_ = 0.3f;   ///< 静止死区，抑制零漂
 
   /// 加速度计"零姿态"偏移：上电时板子未必水平、模块本身也有零偏，
