@@ -72,6 +72,13 @@ class Attitude {
   /// 当前姿态（度）
   const Euler& euler() const { return euler_; }
 
+  /// 角度的微分（dps），由滤波后的欧拉角差分得到。
+  ///
+  /// 为什么不用陀螺：陀螺在"翻面补偿"后符号和欧拉角不一致，
+  /// 用它做阻尼会变成正反馈（实测：kd 越大越振荡，峰峰 50°+）。
+  /// 直接微分欧拉角，符号必然和角度一致，怎么装都不会错。
+  const GyroBias& angle_rate() const { return angle_rate_; }
+
   /// 修正后的角速度（已扣零偏、已按安装方向取反），单位 dps。
   /// 控制器必须用这个值，不能自己拿 raw 算 —— 否则和角度符号不一致，
   /// 阻尼项会变成正反馈（踩过：表现为"怎么调方向都振荡"）。
@@ -120,6 +127,9 @@ class Attitude {
   Euler euler_{};
   GyroBias bias_{};
   GyroBias rate_{};   ///< 最近一帧修正后的角速度（dps）
+  GyroBias angle_rate_{};   ///< 欧拉角微分（dps），供控制器做阻尼
+  Euler prev_euler_{};      ///< 上一帧欧拉角
+  bool has_prev_ = false;
   float deadband_dps_ = 0.3f;   ///< 静止死区，抑制零漂
 
   /// 加速度计"零姿态"偏移：上电时板子未必水平、模块本身也有零偏，

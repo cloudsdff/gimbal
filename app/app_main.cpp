@@ -224,7 +224,8 @@ void attitude_task(void* arg)
         // 3.2 角速度（扣零偏，单位 dps）
         // 用姿态模块算好的角速度：它已经扣过零偏、也按安装方向取反过。
         // 这里如果自己拿 raw 算，符号会和角度不一致，阻尼变成正反馈（踩过）。
-        const module::GyroBias& cr = g_att.corrected_rates();
+        // 用欧拉角微分做阻尼：符号必然和角度一致（用陀螺会因为翻面补偿而反号）
+        const module::GyroBias& cr = g_att.angle_rate();
         module::Rates rates{};
         rates.yaw = cr.z;
         rates.pitch = cr.y;
@@ -269,7 +270,13 @@ void attitude_task(void* arg)
         LOG_W("mpu read failed: %s (consecutive=%lu)", common::to_str(r),
               (unsigned long)consecutive_fail);
       }
-      (void)bsp::i2c1.recover_bus();
+      // 恢复函数限速：每 200 ms 最多一次。
+      // 不限速的话每帧都做一次 9 时钟 + STOP + 软复位，CPU 全耗在这里，
+      // 表现为采样率掉到 60 Hz、日志把串口刷爆（实测过）
+      if ((now - last_recover) >= 200u) {
+        last_recover = now;
+        (void)bsp::i2c1.recover_bus();
+      }
 
       // 安全策略：传感器连续失效约 0.5 秒（100 帧）就自动停机。
       // 不这么做会形成正反馈：角度算错 → 舵机全力纠正 → 大电流 → 干扰更大 → 更错
