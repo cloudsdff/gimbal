@@ -112,6 +112,13 @@ void handle_command(const char* line)
       g_gimbal.set_gains(g);
       LOG_I("cmd gains: kp=%d kd=%d ki=%d (x100/x100/x1000)", kp, kd, ki);
     }
+  } else if (line[0] == 'L' && line[1] == ',') {
+    // L,<backlash_x100>:???????(?? 250 = 2.5°)
+    const int v = std::atoi(line + 2);
+    const float deg = (float)v / 100.0f;
+    g_servo_yaw.set_backlash(deg);
+    g_servo_pitch.set_backlash(deg);
+    LOG_I("cmd backlash -> %d (0.01deg)", v);
   } else if (line[0] == 'F') {
     // F:??"??????"??(roll ?? ±180° ??)
     g_att.set_mount_flip(!g_att.mount_flip());
@@ -157,7 +164,12 @@ void attitude_task(void* arg)
 
   // ---- 1) ä¼ æ„Ÿå™¨ ----
   common::Err e = g_mpu.init();
+  int retry = 0;
   while (e != common::Err::Ok) {
+    // ? 2 ????? I2C ?? 50 kHz(????? 100 kHz ?????)
+    if (++retry == 2) {
+      (void)bsp::i2c1_set_speed(50000);
+    }
     LOG_E("mpu init -> %s, retry in 2s (check VCC/GND/SCL=B6/SDA=B7)", common::to_str(e));
     osDelay(2000);
     (void)bsp::i2c1.recover_bus();
@@ -182,7 +194,8 @@ void attitude_task(void* arg)
   const std::uint32_t t_start = osKernelGetTickCount();
   std::uint32_t last_stats = t_start;
   std::uint32_t frames = 0, sent = 0, dropped = 0;
-  std::uint32_t consecutive_fail = 0;   // consecutive read failures (safety stop)
+  std::uint32_t consecutive_fail = 0;
+  std::uint32_t last_recover = 0;   // ??????,???????? CPU
   bool cal_logged = false;
 
   for (;;) {

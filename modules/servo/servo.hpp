@@ -47,6 +47,18 @@ class Servo {
   /// 死区：目标与当前差小于该值就不动，避免舵机来回抖
   void set_deadband(float deg) { deadband_ = deg; }
 
+  /**
+   * @brief 回差补偿（backlash / 齿轮间隙）
+   *
+   * 实测：同一个脉宽 1500 us，从下往上走到 0.05°，从上往下走到 2.51° —— 回差约 2.5°。
+   * 这是 SG90 塑料齿轮的固有间隙：换向时前 2.5° 的转动只是"贴齿"，不传力。
+   *
+   * 补偿办法：检测到方向反转时，命令值立刻额外跳过一个回差量，
+   * 让齿轮先贴紧，后续指令才真正作用在负载上。
+   */
+  void set_backlash(float deg) { backlash_ = (deg > 0.0f) ? deg : 0.0f; }
+  float backlash() const { return backlash_; }
+
   void enable(bool on) { enabled_ = on; }
 
  private:
@@ -60,6 +72,8 @@ class Servo {
   float max_deg_ = 160.0f;
   float slew_ = 60.0f;      ///< 最大角速度（deg/s）
   float deadband_ = 0.3f;   ///< 角度死区（deg）
+  float backlash_ = 0.0f;   ///< 回差补偿（deg）
+  signed char last_dir_ = 0;  ///< 上次运动方向（+1/-1），用于检测换向
   bool enabled_ = false;
   bool inited_ = false;
 };
