@@ -36,10 +36,10 @@ constexpr std::size_t kTxBufSize = 256;   // 内部发送缓冲（占 256 B RAM�
 UART_HandleTypeDef* const kHuart = &huart1;
 
 std::uint8_t g_tx_buf[kTxBufSize];
-volatile bool g_tx_busy = false;   // ?????(DMA ????)
-volatile bool g_dma_active = false; // DMA ??????(?????)
+volatile bool g_tx_busy = false;
+volatile bool g_dma_active = false;
 
-// ????:????????? DMA ?? USART1
+// (comment cleaned)
 osMutexId_t g_tx_mutex = nullptr;
 
 void ensure_mutex()
@@ -106,7 +106,7 @@ class Uart1 final : public Uart {
     HAL_StatusTypeDef st = HAL_UART_Transmit_DMA(kHuart, g_tx_buf,
                                                  static_cast<std::uint16_t>(len));
     if (st == HAL_BUSY) {
-      // ??:??????????????
+      // (comment cleaned)
       g_dma_active = false;
       g_tx_busy = false;
       (void)HAL_UART_Abort(kHuart);
@@ -157,8 +157,8 @@ class Uart1 final : public Uart {
   /// 由 HAL 的发送完成回调调用（中断上下文，只清标志）
   void on_tx_cplt()
   {
-    // ??????? DMA ??,??????;
-    // ????'?????'????????,??????(???)
+    // (comment cleaned)
+    // (comment cleaned)
     if (g_dma_active) {
       g_dma_active = false;
       g_tx_busy = false;
@@ -191,7 +191,7 @@ bool uart1_wait_idle(std::uint32_t timeout_ms)
   const std::uint32_t t0 = HAL_GetTick();
   while (g_tx_busy) {
     if ((HAL_GetTick() - t0) > timeout_ms) return false;
-    for (volatile int i = 0; i < 200; ++i) {}   // ???(???????????)
+    for (volatile int i = 0; i < 200; ++i) {}
   }
   return true;
 }
@@ -211,7 +211,7 @@ void uart1_on_rx_byte()
 {
   ++g_rx_count;
   const std::uint32_t next = (g_rx_head + 1) % kRxRingSize;
-  if (next != g_rx_tail) {           // ??????,??????
+  if (next != g_rx_tail) {
     g_rx_ring[g_rx_head] = g_rx_byte;
     g_rx_head = next;
   }
@@ -242,7 +242,7 @@ extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
     bsp::uart1_on_tx_cplt();
   }
 }
-/* -------------------- HAL ??(?????) -------------------- */
+// (comment cleaned)
 
 extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
 {

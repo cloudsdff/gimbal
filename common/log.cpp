@@ -130,7 +130,7 @@ extern "C" void common_log_info(const char* fmt, ...)
   va_end(ap);
   ::common::log_impl(::common::LogLevel::Info, "%s", body);
 }
-/* ????:?????,???/???????(???????) */
+// (comment cleaned)
 extern "C" void common_log_sync(const char* s)
 {
   while (*s != '\0') {

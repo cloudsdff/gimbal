@@ -82,27 +82,27 @@ void handle_command(const char* line)
       LOG_W("cmd alpha out of range: %d", milli);
     }
   } else if (line[0] == 'B' && line[1] == ',') {
-    // B,<baud>:??????(HC-05 ?? 9600 ??,??? AT ??)
+    // (comment cleaned)
     const int baud = std::atoi(line + 2);
     LOG_I("cmd bt baud -> %d : %s", baud, common::to_str(bsp::uart2_set_baud((std::uint32_t)baud)));
   } else if (line[0] == 'S' && line[1] == ',') {
-    // S,<yaw_sign>,<pitch_sign>:????????? S,1,-1 ??
+    // (comment cleaned)
     int sy = 1, sp = 1;
     if (std::sscanf(line + 2, "%d,%d", &sy, &sp) == 2) {
       g_gimbal.set_sign((float)sy, (float)sp);
       LOG_I("cmd axis sign -> %d,%d", sy, sp);
     }
   } else if (line[0] == 'P' && line[1] == ',') {
-    // P,<yaw_us>,<pitch_us>:?????????(500-2500),????????
+    // (comment cleaned)
     int uy = 1500, up = 1500;
     if (std::sscanf(line + 2, "%d,%d", &uy, &up) == 2) {
-      (void)g_gimbal.stop();          // ????,?????
+      (void)g_gimbal.stop();
       (void)bsp::servo_pwm.set_pulse_us(1, (std::uint32_t)uy);
       (void)bsp::servo_pwm.set_pulse_us(2, (std::uint32_t)up);
       LOG_I("cmd openloop: yaw=%dus pitch=%dus", uy, up);
     }
   } else if (line[0] == 'G' && line[1] == ',') {
-    // G,<kp_x100>,<kd_x100>,<ki_x1000>:?????
+    // (comment cleaned)
     int kp = 0, kd = 0, ki = 0;
     if (std::sscanf(line + 2, "%d,%d,%d", &kp, &kd, &ki) == 3) {
       module::Gimbal::Gains g = g_gimbal.gains();
@@ -113,22 +113,22 @@ void handle_command(const char* line)
       LOG_I("cmd gains: kp=%d kd=%d ki=%d (x100/x100/x1000)", kp, kd, ki);
     }
   } else if (line[0] == 'L' && line[1] == ',') {
-    // L,<backlash_x100>:???????(?? 250 = 2.5°)
+    // (comment cleaned)
     const int v = std::atoi(line + 2);
     const float deg = (float)v / 100.0f;
     g_servo_yaw.set_backlash(deg);
     g_servo_pitch.set_backlash(deg);
     LOG_I("cmd backlash -> %d (0.01deg)", v);
   } else if (line[0] == 'F') {
-    // F:??"??????"??(roll ?? ±180° ??)
+    // (comment cleaned)
     g_att.set_mount_flip(!g_att.mount_flip());
     LOG_I("cmd mount flip -> %d (now recalibrate with C)", g_att.mount_flip() ? 1 : 0);
   } else if (line[0] == 'D') {
-    // D:??(??????),??????/??
+    // (comment cleaned)
     (void)g_gimbal.stop();
     LOG_I("cmd disable: gimbal stopped (send X to resume)");
   } else if (line[0] == 'X') {
-    // X:???????(????????)
+    // (comment cleaned)
     g_gimbal.resume();
     LOG_I("cmd resume: gimbal enabled");
   } else if (line[0] == 'C') {
@@ -166,7 +166,7 @@ void attitude_task(void* arg)
   common::Err e = g_mpu.init();
   int retry = 0;
   while (e != common::Err::Ok) {
-    // ? 2 ????? I2C ?? 50 kHz(????? 100 kHz ?????)
+    // (comment cleaned)
     if (++retry == 2) {
       (void)bsp::i2c1_set_speed(50000);
     }
@@ -195,7 +195,7 @@ void attitude_task(void* arg)
   std::uint32_t last_stats = t_start;
   std::uint32_t frames = 0, sent = 0, dropped = 0;
   std::uint32_t consecutive_fail = 0;
-  std::uint32_t last_recover = 0;   // ??????,???????? CPU
+  std::uint32_t last_recover = 0;
   bool cal_logged = false;
 
   for (;;) {

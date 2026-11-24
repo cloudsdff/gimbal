@@ -35,7 +35,7 @@ void log_impl(LogLevel lv, const char* fmt, ...);
 /// 被丢弃的日志条数（队列满）
 std::uint32_t log_dropped();
 
-/// ???????????
+// (comment cleaned)
 std::uint32_t log_sent();
 
 }  // namespace common

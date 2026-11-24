@@ -31,7 +31,7 @@ bool uart1_wait_idle(std::uint32_t timeout_ms);
 void uart1_start_rx();
 void uart1_on_rx_byte();
 
-/// ????????(???)
+// (comment cleaned)
 std::uint32_t uart1_rx_count();
 
 }  // namespace bsp
