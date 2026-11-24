@@ -79,8 +79,8 @@ common::Err Gimbal::update(const Euler& att, const Rates& rates, float dt_s)
   if (dt_s <= 0.0f) dt_s = 0.005f;
 
   // yaw 轴：用 yaw 角度 + gz 角速度；pitch 轴：用 pitch 角度 + gy 角速度
-  (void)step_axis(ax_[0], target_[0], att.yaw, rates.yaw, dt_s);
-  (void)step_axis(ax_[1], target_[1], att.pitch, rates.pitch, dt_s);
+  (void)step_axis(ax_[0], target_[0], att.yaw, rates.yaw, dt_s, 0.0f);
+  (void)step_axis(ax_[1], target_[1], att.pitch, rates.pitch, dt_s, gains_.ff_pitch);
 
   out_[0] = ax_[0].out;
   out_[1] = ax_[1].out;
@@ -97,7 +97,7 @@ common::Err Gimbal::update(const Euler& att, const Rates& rates, float dt_s)
 }
 
 common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float rate,
-                              float dt)
+                              float dt, float ff)
 {
   float e_ang = target - angle;
 
@@ -135,7 +135,7 @@ common::Err Gimbal::step_axis(AxisState& st, float target, float angle, float ra
   }
 
   // 内环输出
-  float out = out_p + st.integ;
+  float out = out_p + st.integ + ff;   // ff = 重力前馈
   out = clampf(out, -gains_.out_max_deg, gains_.out_max_deg);
   st.out = out;
   return common::Err::Ok;

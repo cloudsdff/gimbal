@@ -48,6 +48,7 @@ module::Gimbal g_gimbal(g_servo_yaw, g_servo_pitch);
 
 /// 蓝牙初始化结果（app_init 在调度器之前执行，日志只能延后到任务里打印）
 common::Err g_bt_init = common::Err::NotInit;
+module::Mpu6050::Raw g_last_raw{};   // 最近一帧原始数据（调试用）
 
 /// 指令缓冲区（调试串口和蓝牙各一份，互不干扰）
 struct CmdBuf {
@@ -103,14 +104,16 @@ void handle_command(const char* line)
     }
   } else if (line[0] == 'G' && line[1] == ',') {
     // (comment cleaned)
-    int kp = 0, kd = 0, ki = 0;
-    if (std::sscanf(line + 2, "%d,%d,%d", &kp, &kd, &ki) == 3) {
+    int kp = 0, kd = 0, ki = 0, ff = 0;
+    const int n = std::sscanf(line + 2, "%d,%d,%d,%d", &kp, &kd, &ki, &ff);
+    if (n >= 3) {
       module::Gimbal::Gains g = g_gimbal.gains();
       g.kp = (float)kp / 100.0f;
       g.kd = (float)kd / 100.0f;
       g.ki = (float)ki / 1000.0f;
+      if (n >= 4) g.ff_pitch = (float)ff / 100.0f;
       g_gimbal.set_gains(g);
-      LOG_I("cmd gains: kp=%d kd=%d ki=%d (x100/x100/x1000)", kp, kd, ki);
+      LOG_I("cmd gains: kp=%d kd=%d ki=%d ff=%d", kp, kd, ki, ff);
     }
   } else if (line[0] == 'L' && line[1] == ',') {
     // (comment cleaned)
@@ -206,6 +209,7 @@ void attitude_task(void* arg)
     const common::Err r = g_mpu.read_raw(raw);
 
     if (r == common::Err::Ok) {
+      g_last_raw = raw;
       const common::Err st = g_att.update(raw, kDt);
       ++frames;
 
@@ -286,13 +290,14 @@ void attitude_task(void* arg)
     if ((now - last_stats) >= 1000u) {
       last_stats = now;
       const module::Euler eu = g_att.euler();
-      LOG_I("att %luHz samp=%lu sent=%lu drop=%lu rx=%lu bt=%lu | yaw=%d pitch=%d roll=%d servo=%lu/%lu",
+      LOG_I("att %luHz samp=%lu sent=%lu drop=%lu rx=%lu bt=%lu | yaw=%d pitch=%d roll=%d servo=%lu/%lu raw=%d,%d,%d",
             (unsigned long)(frames * 1000u / (now - t_start ? (now - t_start) : 1u)),
             (unsigned long)frames, (unsigned long)sent, (unsigned long)dropped,
             (unsigned long)bsp::uart1_rx_count(), (unsigned long)bsp::uart2_rx_count(),
             cd(eu.yaw), cd(eu.pitch), cd(eu.roll),
             (unsigned long)g_servo_yaw.pulse_us(),
-            (unsigned long)g_servo_pitch.pulse_us());
+            (unsigned long)g_servo_pitch.pulse_us(), (int)g_last_raw.ax, (int)g_last_raw.ay,
+            (int)g_last_raw.az);
     }
 
     osDelayUntil(now + kSamplePeriodMs);

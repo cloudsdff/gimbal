@@ -108,7 +108,10 @@ class Attitude {
   float to_g(std::int16_t v) const { return static_cast<float>(v) / kAccelLsbPerG; }
 
   float alpha_;
-  bool flip_ = false;           ///< 模块翻面安装补偿（绕 X 轴 180°）
+  // 默认开启：这块模块是倒装在上层平台上的（roll 读数接近 180°），
+  // 之前用 F 指令临时打开，一重启就失效、控制方向反过来。
+  // 装正之后把它改回 false 即可。
+  bool flip_ = true;            ///< 模块翻面安装补偿（绕 X 轴 180°）
   Euler euler_{};
   GyroBias bias_{};
   float deadband_dps_ = 0.3f;   ///< 静止死区，抑制零漂
