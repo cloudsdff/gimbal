@@ -18,6 +18,9 @@ void i2c1_on_async_done(int status);
 /// ?? PB6/PB7 ????(??/???)
 void i2c1_enable_internal_pullup();
 
+/// ?? I2C ??(?????? 50 kHz ?????)
+common::Err i2c1_set_speed(std::uint32_t hz);
+
 }  // namespace bsp
 
 #endif  // BSP_I2C_IMPL_HPP

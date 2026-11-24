@@ -18,7 +18,7 @@
 namespace module {
 namespace {
 
-constexpr std::uint32_t kTimeoutMs = 50;
+constexpr std::uint32_t kTimeoutMs = 10;   // 14 ?? @100kHz ??? 1.5 ms,10 ms ??
 
 std::int16_t be16(const std::uint8_t* p)
 {
