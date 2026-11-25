@@ -50,7 +50,9 @@ module::Gimbal g_gimbal(g_servo_yaw, g_servo_pitch);
 
 /// 蓝牙初始化结果（app_init 在调度器之前执行，日志只能延后到任务里打印）
 common::Err g_bt_init = common::Err::NotInit;
-bool g_quiet = false;   // 静默模式：停止 50 Hz 角度帧，只留 1 Hz 统计（录视频时用）
+bool g_quiet = false;
+// 最近一次 P 指令的开环脉宽（用于 Z 置零时换算控制器中位）
+std::uint32_t g_ol_pulse[2] = {1500, 1500};   // 静默模式：停止 50 Hz 角度帧，只留 1 Hz 统计（录视频时用）
 module::Mpu6050::Raw g_last_raw{};   // 最近一帧原始数据（调试用）
 
 /// 指令缓冲区（调试串口和蓝牙各一份，互不干扰）
@@ -103,6 +105,8 @@ void handle_command(const char* line)
       (void)g_gimbal.stop();
       (void)bsp::servo_pwm.set_pulse_us(1, (std::uint32_t)uy);
       (void)bsp::servo_pwm.set_pulse_us(2, (std::uint32_t)up);
+      g_ol_pulse[0] = (std::uint32_t)uy;
+      g_ol_pulse[1] = (std::uint32_t)up;
       LOG_I("cmd openloop: yaw=%dus pitch=%dus", uy, up);
     }
   } else if (line[0] == 'G' && line[1] == ',') {
@@ -141,7 +145,14 @@ void handle_command(const char* line)
   } else if (line[0] == 'Z') {
     // Z：就地置零（把当前姿态当作 0°），比 C 更可预测
     g_att.zero_here();
-    LOG_I("cmd zero_here: current pose = 0deg");
+    // 同时把控制器的中位设成"当前舵机位置"：
+    // 否则一开闭环，舵机会往出厂中位（1500 µs）跑，把平台带离标定点（实测）。
+    // 脉宽 500..2500 us 对应舵机角度 0..180°
+    const float yaw_deg = (static_cast<float>(g_ol_pulse[0]) - 500.0f) / 11.111f;
+    const float pitch_deg = (static_cast<float>(g_ol_pulse[1]) - 500.0f) / 11.111f;
+    g_gimbal.set_center(yaw_deg, pitch_deg);
+    LOG_I("cmd zero_here: pose=0deg, center=(%lu us / %lu us)",
+          (unsigned long)g_ol_pulse[0], (unsigned long)g_ol_pulse[1]);
   } else if (line[0] == 'A') {
     // A：切换"仅用加速度计"模式（A 再按一次切回互补滤波）
     g_att.set_accel_only(!g_att.accel_only());

@@ -67,6 +67,20 @@ class Gimbal {
   void set_target(float yaw_deg, float pitch_deg);
   void set_gains(const Gains& g) { gains_ = g; }
 
+  /// 设置两轴的机械中位（舵机角度）。
+  /// 用途：把零点标在行程中间后，控制器必须围绕"当前姿态"工作，
+  /// 否则一开闭环舵机就会往 1500 µs 的中位跑，把平台带偏（实测）。
+  void set_center(float yaw_deg, float pitch_deg)
+  {
+    yaw_.set_limits(20.0f, 160.0f);
+    pitch_.set_limits(20.0f, 160.0f);
+    yaw_center_ = yaw_deg;
+    pitch_center_ = pitch_deg;
+  }
+
+  float yaw_center() const { return yaw_center_; }
+  float pitch_center() const { return pitch_center_; }
+
   /// 轴方向：+1 或 -1。装配后如果云台朝错误方向推（正反馈），
   /// 把对应轴取反即可，不用改接线、也不用重新编译逻辑。
   void set_sign(float yaw_sign, float pitch_sign)
@@ -122,6 +136,8 @@ class Gimbal {
   float target_[2]{};      ///< 目标角度（相对）
   float out_[2]{};         ///< 当前输出偏置（度）
   float center_deg_ = 90.0f;
+  float yaw_center_ = 90.0f;
+  float pitch_center_ = 90.0f;
   float sign_[2] = {1.0f, 1.0f};   ///< axis direction (+1/-1)
   bool inited_ = false;
   bool enabled_ = true;

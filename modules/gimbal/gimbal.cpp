@@ -49,6 +49,8 @@ common::Err Gimbal::init(float center_deg)
     out_[i] = 0.0f;
   }
 
+  yaw_center_ = center_deg_;
+  pitch_center_ = center_deg_;
   common::Err e = yaw_.init(center_deg_);
   if (e != common::Err::Ok) return e;
   e = pitch_.init(center_deg_);
@@ -86,8 +88,8 @@ common::Err Gimbal::update(const Euler& att, const Rates& rates, float dt_s)
   out_[1] = ax_[1].out;
 
   // 输出到舵机：中位 + 偏置（乘方向系数，装配后可在线取反）
-  (void)yaw_.set_target(center_deg_ + sign_[0] * out_[0]);
-  (void)pitch_.set_target(center_deg_ + sign_[1] * out_[1]);
+  (void)yaw_.set_target(yaw_center_ + sign_[0] * out_[0]);
+  (void)pitch_.set_target(pitch_center_ + sign_[1] * out_[1]);
 
   // 推动斜率限制（缓启动就在这里生效）
   (void)yaw_.update(dt_s);
