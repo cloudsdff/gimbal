@@ -215,16 +215,22 @@ void attitude_task(void* arg)
   LOG_I("soft i2c pins ready (PB6=SCL PB7=SDA, bit-bang)");
   common::Err e = g_mpu.reinit();
   int retry = 0;
-  while (e != common::Err::Ok) {
-    // (comment cleaned)
-    if (++retry == 2) {
-    }
-    LOG_E("mpu init -> %s, retry in 2s (check VCC/GND/SCL=B6/SDA=B7)", common::to_str(e));
+  // 最多重试 3 次就放弃：传感器坏了不应该把整个固件卡死在这里，
+  // 否则舵机初始化、串口指令（P/D 等）全都收不到，连"单独测舵机"都做不了。
+  bool sensor_ok = (e == common::Err::Ok);
+  while (!sensor_ok && retry < 3) {
+    ++retry;
+    LOG_E("mpu init -> %s, retry %d/3 (check VCC/GND/SCL=B6/SDA=B7)", common::to_str(e), retry);
     osDelay(2000);
     (void)bsp::soft_i2c.recover_bus();
     e = g_mpu.reinit();
+    sensor_ok = (e == common::Err::Ok);
   }
-  LOG_I("mpu init -> Ok");
+  if (sensor_ok) {
+    LOG_I("mpu init -> Ok");
+  } else {
+    LOG_E("mpu init FAILED after %d retries -> 继续运行，但姿态不可用（舵机指令仍可用）", retry);
+  }
 
   // ---- 2) 舵机与云台 ----
   if (bsp::servo_pwm.init() == common::Err::Ok) {
