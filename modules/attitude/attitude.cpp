@@ -67,6 +67,16 @@ void Attitude::begin_calibration(std::uint16_t samples)
   reset();
 }
 
+void Attitude::zero_here()
+{
+  offset_roll_ = last_roll_raw_;
+  offset_pitch_ = last_pitch_raw_;
+  euler_.roll = 0.0f;
+  euler_.pitch = 0.0f;
+  euler_.yaw = 0.0f;
+  has_prev_ = false;
+}
+
 void Attitude::set_alpha(float a)
 {
   if (a < 0.5f) a = 0.5f;
@@ -146,7 +156,9 @@ common::Err Attitude::update(const Mpu6050::Raw& raw, float dt_s)
 
   // ---------- 加速度计角度（扣除"零姿态"偏移）----------
   // 不扣的话：板子放得不平、模块自身有零偏，平放时 pitch 会是 8° 之类的假值
+  last_roll_raw_ = std::atan2(ay, az) * kRadToDeg;
   const float roll_acc = std::atan2(ay, az) * kRadToDeg - offset_roll_;
+  last_pitch_raw_ = std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg;
   const float pitch_acc =
       std::atan2(-ax, std::sqrt(ay * ay + az * az)) * kRadToDeg - offset_pitch_;
 

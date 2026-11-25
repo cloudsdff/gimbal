@@ -138,6 +138,10 @@ void handle_command(const char* line)
     // (comment cleaned)
     g_gimbal.resume();
     LOG_I("cmd resume: gimbal enabled");
+  } else if (line[0] == 'Z') {
+    // Z：就地置零（把当前姿态当作 0°），比 C 更可预测
+    g_att.zero_here();
+    LOG_I("cmd zero_here: current pose = 0deg");
   } else if (line[0] == 'A') {
     // A：切换"仅用加速度计"模式（A 再按一次切回互补滤波）
     g_att.set_accel_only(!g_att.accel_only());

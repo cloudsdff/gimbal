@@ -95,6 +95,11 @@ class Attitude {
   /// 校准后仍会缓慢发散（实测 4 秒漂 20°）。加速度计角度没有积分过程，
   /// 不会漂移，噪声用一阶低通压掉即可 —— 2 Hz 以内的云台自稳完全够用。
   void set_accel_only(bool on) { accel_only_ = on; }
+
+  /// 就地置零：把"当前这一帧"的加速度角直接当作零点。
+  /// 比 begin_calibration 的"采 200 帧求平均"更可预测 —— 后者在平台
+  /// 缓慢下沉时会把下沉过程也平均进去，导致零点偏移 9°（实测）。
+  void zero_here();
   bool accel_only() const { return accel_only_; }
   float alpha() const { return alpha_; }
 
@@ -130,6 +135,8 @@ class Attitude {
   // 默认开启：这块模块是倒装在上层平台上的（roll 读数接近 180°），
   // 之前用 F 指令临时打开，一重启就失效、控制方向反过来。
   // 装正之后把它改回 false 即可。
+  float last_roll_raw_ = 0.0f;    ///< 最近一帧未扣零点的加速度角
+  float last_pitch_raw_ = 0.0f;
   bool accel_only_ = false;   ///< true = 只用加速度计角度（不积分陀螺）
   bool flip_ = false;            ///< 模块翻面安装补偿（绕 X 轴 180°）
   Euler euler_{};
