@@ -142,6 +142,15 @@ void handle_command(const char* line)
     // (comment cleaned)
     g_gimbal.resume();
     LOG_I("cmd resume: gimbal enabled");
+  } else if (line[0] == 'H' && line[1] == ',') {
+    // H：设置角度死区（0.1° 为单位）。死区太小会因为舵机回差产生持续抖动。
+    int hd = 0;
+    if (std::sscanf(line + 2, "%d", &hd) == 1) {
+      module::Gimbal::Gains g = g_gimbal.gains();
+      g.deadband_deg = (float)hd / 10.0f;
+      g_gimbal.set_gains(g);
+      LOG_I("cmd deadband -> %d (0.1deg)", hd);
+    }
   } else if (line[0] == 'Z') {
     // Z：就地置零（把当前姿态当作 0°），比 C 更可预测
     g_att.zero_here();
