@@ -159,3 +159,7 @@ python upper/app.py
 ```
 
 > **注意用 Release 构建**：Debug 版本的 Flash 占用 99%，Release 只有 68%。
+
+## 开发日志
+
+- [docs/23-开发日志.md](docs/23-开发日志.md)：19 个问题的完整排查过程
